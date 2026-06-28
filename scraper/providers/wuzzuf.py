@@ -1,3 +1,4 @@
+# scraper/providers/wuzzuf.py
 import re
 import time
 from urllib.parse import quote
@@ -11,12 +12,8 @@ class WuzzufProvider(JobProvider):
     def __init__(self, location_filter=None, max_experience_years=None):
         self.location_filter = location_filter or []
         self.max_experience_years = max_experience_years
-        self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        }
+        self.headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         self.search_url = "https://wuzzuf.net/search/jobs/?q={query}&start={page}"
-
-        # أنماط الاستخراج
         self.email_re = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
         self.phone_re = re.compile(r"(?:\+?20|0)\s*1[0-9](?:[\s\-]?[0-9]){8}")
         self.phone_context_re = re.compile(
@@ -89,7 +86,6 @@ class WuzzufProvider(JobProvider):
                 "posted": posted.strip(),
                 "url": full_url,
             }
-            # استخراج الخبرة
             exp_match = self.exp_range_re.search(full_card_text)
             if exp_match:
                 job["experience"] = f"{exp_match.group(1)} - {exp_match.group(2)} Yrs of Exp"
