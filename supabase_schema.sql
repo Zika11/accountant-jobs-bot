@@ -1,8 +1,6 @@
 -- ============================================
--- إنشاء الجداول المطلوبة لتشغيل البوت
+-- جدول الوظائف (jobs)
 -- ============================================
-
--- 1. جدول الوظائف
 create table if not exists jobs (
   id uuid primary key default gen_random_uuid(),
   title text not null,
@@ -17,7 +15,6 @@ create table if not exists jobs (
   source text default 'unknown',
   status text default 'pending',
   notified boolean default false,
-  auto_applied boolean default false,
   salary_min int,
   salary_max int,
   job_type text,
@@ -25,13 +22,24 @@ create table if not exists jobs (
   created_at timestamptz default now()
 );
 
--- 2. جدول الإعدادات
+-- إضافة الأعمدة لو مش موجودة
+alter table jobs add column if not exists source text default 'unknown';
+alter table jobs add column if not exists salary_min int;
+alter table jobs add column if not exists salary_max int;
+alter table jobs add column if not exists job_type text;
+alter table jobs add column if not exists qualification text;
+
+-- ============================================
+-- جدول الإعدادات (settings)
+-- ============================================
 create table if not exists settings (
   key text primary key,
   value text
 );
 
--- 3. جدول الملفات الشخصية
+-- ============================================
+-- جدول الملفات الشخصية (user_profiles)
+-- ============================================
 create table if not exists user_profiles (
   user_id text primary key,
   name text,
@@ -48,7 +56,15 @@ create table if not exists user_profiles (
   created_at timestamptz default now()
 );
 
--- 4. جدول سجلات الأخطاء (للسكرابر)
+-- إضافة الأعمدة لو مش موجودة
+alter table user_profiles add column if not exists chat_id text;
+alter table user_profiles add column if not exists phone text;
+alter table user_profiles add column if not exists email text;
+alter table user_profiles add column if not exists auto_apply boolean default true;
+
+-- ============================================
+-- جدول سجلات الأخطاء (scraper_logs)
+-- ============================================
 create table if not exists scraper_logs (
   id uuid primary key default gen_random_uuid(),
   source text,
@@ -58,29 +74,11 @@ create table if not exists scraper_logs (
 );
 
 -- ============================================
--- إضافة الأعمدة المفقودة (للتحديث)
+-- الإندكسات
 -- ============================================
-
--- jobs
-alter table jobs add column if not exists salary_min int;
-alter table jobs add column if not exists salary_max int;
-alter table jobs add column if not exists job_type text;
-alter table jobs add column if not exists qualification text;
-alter table jobs add column if not exists auto_applied boolean default false;
-
--- user_profiles
-alter table user_profiles add column if not exists chat_id text;
-alter table user_profiles add column if not exists phone text;
-alter table user_profiles add column if not exists email text;
-alter table user_profiles add column if not exists auto_apply boolean default true;
-
--- ============================================
--- إنشاء الفهارس (لتحسين الأداء)
--- ============================================
-
 create index if not exists idx_jobs_status on jobs (status);
 create index if not exists idx_jobs_notified on jobs (notified);
 create index if not exists idx_jobs_source on jobs (source);
 create index if not exists idx_jobs_created on jobs (created_at);
 create index if not exists idx_jobs_status_created on jobs (status, created_at);
-create index if not exists idx_jobs_url on jobs (url);
+create index if not exists idx_user_profiles_chat_id on user_profiles (chat_id);
