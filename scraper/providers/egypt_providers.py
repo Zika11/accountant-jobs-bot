@@ -293,7 +293,6 @@ class TelegramProvider(JobProvider):
             if not channel:
                 continue
             try:
-                # جلب آخر الرسائل من القناة
                 response = requests.get(
                     f"{self.base_url}/getUpdates",
                     params={"chat_id": f"@{channel}", "limit": 50},
@@ -314,7 +313,6 @@ class TelegramProvider(JobProvider):
         return jobs
 
     def _parse_message(self, text: str, channel: str) -> dict:
-        # استخراج المعلومات من الرسالة
         title_match = re.search(r"(?:وظيفة|مطلوب)\s*(.+?)(?:\n|$)", text, re.I)
         title = title_match.group(1).strip() if title_match else "وظيفة جديدة"
         
@@ -324,7 +322,6 @@ class TelegramProvider(JobProvider):
         location_match = re.search(r"(?:مكان|عنوان|منطقة)\s*[::]\s*(.+?)(?:\n|$)", text, re.I)
         location = location_match.group(1).strip() if location_match else ""
         
-        # استخراج الرقم
         phone_match = re.search(r'(?:\+?20|0)\s*1[0-9](?:[\s\-]?[0-9]){8}', text)
         phone = None
         if phone_match:
@@ -333,11 +330,9 @@ class TelegramProvider(JobProvider):
                 digits = "0" + digits[2:]
             phone = digits
         
-        # استخراج الإيميل
         email_match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text)
         email = email_match.group(0) if email_match else None
         
-        # استخراج الرابط (لو موجود)
         link_match = re.search(r'(https?://[^\s]+)', text)
         url = link_match.group(0) if link_match else f"https://t.me/{channel}"
         
@@ -355,30 +350,30 @@ class TelegramProvider(JobProvider):
 
 
 # ============================================
-# 5. فيسبوك (RSS/API) - معدل لدعم 50 جروب
+# 5. فيسبوك (API) - معدل لاستخدام 50 جروب
 # ============================================
 class FacebookProvider(JobProvider):
     source_name = "facebook"
 
     def __init__(self):
         self.access_token = os.environ.get("FACEBOOK_ACCESS_TOKEN")
-        groups_raw = os.environ.get("FACEBOOK_GROUPS", "")
-        # تقسيم الجروبات مع تجاهل القيم الفارغة
-        self.groups = [g.strip() for g in groups_raw.split(",") if g.strip()]
+        self.groups = os.environ.get("FACEBOOK_GROUPS", "").split(",")
         self.base_url = "https://graph.facebook.com/v18.0"
-        self.max_groups_per_run = int(os.environ.get("FACEBOOK_MAX_GROUPS", 10))  # 🔥 حد أقصى 10 جروبات لكل تشغيلة
 
     def fetch_jobs(self, search_term: str, max_pages: int = 3) -> list:
         jobs = []
-        if not self.access_token or not self.groups:
+        if not self.access_token or not self.groups or not self.groups[0]:
             print("⚠️ فيسبوك: مفيش توكن أو جروبات محددة")
             return jobs
 
-        # خذ أول max_groups_per_run جروب بس (عشان الأداء)
-        active_groups = self.groups[:self.max_groups_per_run]
-        print(f"📱 فيسبوك: هنجيب من {len(active_groups)} جروب (من أصل {len(self.groups)})")
+        # خد أول 10 جروبات بس لكل تشغيلة (عشان السرعة)
+        active_groups = self.groups[:10]  # 🔥 غير الرقم حسب احتياجك
+        print(f"📱 فيسبوك: هجيب من {len(active_groups)} جروب")
 
         for group in active_groups:
+            group = group.strip()
+            if not group:
+                continue
             try:
                 url = f"{self.base_url}/{group}/feed"
                 params = {
@@ -386,35 +381,32 @@ class FacebookProvider(JobProvider):
                     "fields": "message,created_time,from,permalink_url",
                     "limit": 20
                 }
-                response = requests.get(url, params=params, timeout=60)  # زودنا الـ timeout
+                response = requests.get(url, params=params, timeout=30)
                 data = response.json()
-                
                 if "error" in data:
-                    print(f"⚠️ فيسبوك جروب {group} خطأ: {data['error'].get('message', '')}")
+                    print(f"⚠️ فيسبوك جروب {group}: {data['error'].get('message', 'خطأ')}")
                     continue
-                    
                 for post in data.get("data", []):
                     text = post.get("message", "")
                     if not text:
                         continue
-                    if search_term in text.lower() or "وظيفة" in text or "محاسب" in text or "مطلوب" in text:
+                    if search_term in text.lower() or "وظيفة" in text or "محاسب" in text:
                         job = self._parse_post(text, post)
                         if job:
                             jobs.append(self._normalize_job(job))
             except Exception as e:
-                print(f"⚠️ فيسبوك جروب {group} فشل: {e}")
-            time.sleep(1.5)  # تأخير بين الجروبات عشان ما نتعملش Block
+                print(f"⚠️ فيسبوك ({group}) فشل: {e}")
+            time.sleep(1)
         return jobs
 
     def _parse_post(self, text: str, post: dict) -> dict:
-        # استخراج المعلومات
-        title_match = re.search(r"(?:وظيفة|مطلوب|فرصة عمل)\s*(.+?)(?:\n|$)", text, re.I)
+        title_match = re.search(r"(?:وظيفة|مطلوب)\s*(.+?)(?:\n|$)", text, re.I)
         title = title_match.group(1).strip() if title_match else "وظيفة جديدة"
         
-        company_match = re.search(r"(?:شركة|جهة|لجهة)\s*[::\-]\s*(.+?)(?:\n|$)", text, re.I)
+        company_match = re.search(r"(?:شركة|جهة)\s*[::]\s*(.+?)(?:\n|$)", text, re.I)
         company = company_match.group(1).strip() if company_match else ""
         
-        location_match = re.search(r"(?:مكان|عنوان|منطقة|محافظة)\s*[::\-]\s*(.+?)(?:\n|$)", text, re.I)
+        location_match = re.search(r"(?:مكان|عنوان|منطقة)\s*[::]\s*(.+?)(?:\n|$)", text, re.I)
         location = location_match.group(1).strip() if location_match else ""
         
         phone_match = re.search(r'(?:\+?20|0)\s*1[0-9](?:[\s\-]?[0-9]){8}', text)
