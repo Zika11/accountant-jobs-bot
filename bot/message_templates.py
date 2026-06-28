@@ -1,7 +1,4 @@
-"""
-توليد رسالة قصيرة مخصصة لكل وظيفة + روابط جاهزة للإرسال (واتساب / إيميل)
-"""
-
+# bot/message_templates.py
 import os
 import urllib.parse
 
@@ -27,19 +24,17 @@ def build_cover_letter(job: dict) -> str:
 
 
 def build_whatsapp_link(job: dict) -> str | None:
-    """لو لقينا رقم تليفون في وصف الوظيفة، نجهز رابط واتساب جاهز بالرسالة"""
     phone = job.get("contact_phone")
     if not phone:
         return None
     clean_phone = phone.strip().replace(" ", "").replace("-", "")
     if clean_phone.startswith("0"):
-        clean_phone = "2" + clean_phone  # كود مصر
+        clean_phone = "2" + clean_phone
     text = urllib.parse.quote(build_cover_letter(job))
     return f"https://wa.me/{clean_phone}?text={text}"
 
 
 def build_mailto_link(job: dict) -> str | None:
-    """لو لقينا إيميل في وصف الوظيفة، نجهز رابط mailto جاهز"""
     email = job.get("contact_email")
     if not email:
         return None
