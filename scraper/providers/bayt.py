@@ -1,3 +1,4 @@
+# scraper/providers/bayt.py
 import re
 import time
 import requests
@@ -22,7 +23,6 @@ class BaytProvider(JobProvider):
                 print(f"⚠️ Bayt صفحة {page} فشلت: {e}")
                 break
             soup = BeautifulSoup(html, 'html.parser')
-            # نفترض هيكل Bayt: كل وظيفة في div class="job-card"
             for item in soup.select('.job-card, .job-item, .job-listing'):
                 title_elem = item.select_one('.job-title a, .title a, h2 a')
                 if not title_elem:
@@ -35,7 +35,6 @@ class BaytProvider(JobProvider):
                 company = company.text.strip() if company else ''
                 location = item.select_one('.location, .city')
                 location = location.text.strip() if location else ''
-                # Bayt يضع الخبرة غالباً في .experience
                 exp_elem = item.select_one('.experience, .exp')
                 experience = exp_elem.text.strip() if exp_elem else ''
                 min_exp = None
