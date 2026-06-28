@@ -1,3 +1,4 @@
+# scraper/providers/indeed.py
 import re
 import time
 import requests
@@ -14,7 +15,7 @@ class IndeedProvider(JobProvider):
 
     def fetch_jobs(self, search_term: str, max_pages: int = 3) -> list:
         jobs = []
-        for page in range(0, max_pages * 10, 10):  # Indeed start index
+        for page in range(0, max_pages * 10, 10):
             url = self.base_url.format(query=search_term.replace(' ', '+'), page=page)
             try:
                 html = requests.get(url, headers=self.headers, timeout=15).text
@@ -34,7 +35,6 @@ class IndeedProvider(JobProvider):
                 company = company.text.strip() if company else ''
                 location = item.select_one('.companyLocation, .location')
                 location = location.text.strip() if location else ''
-                # Indeed لا يظهر الخبرة بوضوح، نحاول استخراجها من النص
                 exp_text = item.get_text()
                 exp_match = re.search(r'(\d+)\s*[+-]?\s*Yrs?', exp_text, re.I)
                 if exp_match:
@@ -58,7 +58,6 @@ class IndeedProvider(JobProvider):
         return jobs
 
     def _extract_contact_info(self, url):
-        # Indeed نادراً ما يضع إيميل/رقم في الوصف، لكن نحاول
         try:
             html = requests.get(url, headers=self.headers, timeout=15).text
             text = BeautifulSoup(html, 'html.parser').get_text(' ')
