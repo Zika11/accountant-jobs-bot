@@ -1,28 +1,53 @@
-# bot/bot.py - نسخة شخصية (تدعم مستخدم واحد فقط + تقديم تلقائي)
+# bot/bot.py
+"""
+بوت تليجرام لتقديم الوظائف تلقائياً (شخصي)
+"""
+
 import asyncio
 import logging
 import os
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
+)
 from db import (
-    get_unnotified_jobs, get_pending_jobs, get_jobs_by_status, get_job_by_id,
-    search_jobs, get_stats, get_setting, set_setting, mark_notified, update_status,
-    mark_applied, get_applied_jobs
+    get_unnotified_jobs,
+    get_pending_jobs,
+    get_jobs_by_status,
+    get_job_by_id,
+    search_jobs,
+    get_stats,
+    get_setting,
+    set_setting,
+    mark_notified,
+    update_status,
+    upsert_user_profile,
+    get_user_profile,
+    get_allowed_users,
 )
 from message_templates import build_cover_letter, build_whatsapp_link, build_mailto_link
-from auto_apply import auto_apply_job
+from auto_apply import auto_apply_whatsapp
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")  # المستخدم الوحيد
-NOTIFY_INTERVAL_SECONDS = int(os.environ.get("NOTIFY_INTERVAL_SECONDS", 3600))  # كل ساعة بدل 6
-
+ALLOWED_USER_IDS = os.environ.get("ALLOWED_USER_IDS", "").split(",")
 AUTO_APPLY_ENABLED = os.environ.get("AUTO_APPLY_ENABLED", "false").lower() == "true"
-AUTO_APPLY_PHONE = os.environ.get("APPLICANT_PHONE", "")
-AUTO_APPLY_EMAIL = os.environ.get("APPLICANT_EMAIL", "")
-AUTO_APPLY_NAME = os.environ.get("APPLICANT_NAME", "")
+WHATSAPP_NUMBER = os.environ.get("WHATSAPP_NUMBER", "")
+
+NOTIFY_INTERVAL_SECONDS = int(os.environ.get("NOTIFY_INTERVAL_SECONDS", 6 * 60 * 60))
+
+
+# ---------- التحقق من المستخدم ----------
+def is_allowed_user(user_id: int) -> bool:
+    return str(user_id) in ALLOWED_USER_IDS
+
 
 # ---------- عرض الوظيفة ----------
 def format_job_text(job: dict) -> str:
@@ -37,18 +62,19 @@ def format_job_text(job: dict) -> str:
         salary = f"{job.get('salary_min', '')} - {job.get('salary_max', '')}".strip(" -")
         lines.append(f"💰 {salary} جنيه")
     if job.get("job_type"):
-        lines.append(f"🕒 {job['job_type']}")
+        lines.append(f"💼 {job['job_type']}")
+    if job.get("posted"):
+        lines.append(f"🕒 {job['posted']}")
     if job.get("source"):
         lines.append(f"🌐 المصدر: {job['source']}")
-    # إضافة حالة التقديم لو موجودة
-    if job.get("applied") == True:
-        lines.append("✅ **تم التقديم عليها**")
+    if job.get("auto_applied"):
+        lines.append("✅ تم التقديم تلقائياً")
     return "\n".join(lines)
+
 
 def build_job_keyboard(job: dict, show_actions: bool = True) -> InlineKeyboardMarkup:
     buttons = [[InlineKeyboardButton("🔗 فتح الوظيفة", url=job["url"])]]
     
-    # أزرار التواصل المباشر
     contact_row = []
     if job.get("contact_phone"):
         contact_row.append(InlineKeyboardButton("📩 واتساب", callback_data=f"prep_wa:{job['id']}"))
@@ -57,215 +83,278 @@ def build_job_keyboard(job: dict, show_actions: bool = True) -> InlineKeyboardMa
     if contact_row:
         buttons.append(contact_row)
     
-    # أزرار الإجراءات
+    # زر التقديم التلقائي
+    if AUTO_APPLY_ENABLED and job.get("contact_phone"):
+        buttons.append([InlineKeyboardButton("🚀 تقديم تلقائي", callback_data=f"auto_apply:{job['id']}")])
+    
     buttons.append([InlineKeyboardButton("📝 الرسالة الجاهزة", callback_data=f"letter:{job['id']}")])
     
     if show_actions:
-        action_row = []
-        if job.get("applied") != True:  # لو مش مقدم عليها
-            action_row.append(InlineKeyboardButton("🎯 قدم تلقائيًا", callback_data=f"auto_apply:{job['id']}"))
-        action_row.append(InlineKeyboardButton("💾 حفظ", callback_data=f"save:{job['id']}"))
-        action_row.append(InlineKeyboardButton("🗑 تجاهل", callback_data=f"ignore:{job['id']}"))
-        buttons.append(action_row)
-    
+        buttons.append([
+            InlineKeyboardButton("💾 حفظ", callback_data=f"save:{job['id']}"),
+            InlineKeyboardButton("🗑 تجاهل", callback_data=f"ignore:{job['id']}"),
+        ])
     return InlineKeyboardMarkup(buttons)
 
-async def send_jobs_digest(context, chat_id, jobs: list[dict], header: str):
-    if not jobs:
-        return
+
+async def send_jobs_digest(context: ContextTypes.DEFAULT_TYPE, chat_id, jobs: list[dict], header: str):
     lines = [header, ""]
     keyboard_rows = []
     for i, job in enumerate(jobs, start=1):
         exp = f" — {job['experience']}" if job.get("experience") else ""
         contact_mark = " 📞" if (job.get("contact_email") or job.get("contact_phone")) else ""
         src = f" [{job.get('source', '')}]" if job.get('source') else ""
-        applied_mark = " ✅مقدم" if job.get("applied") else ""
-        lines.append(f"{i}. {job['title']} | {job.get('company') or '-'}{exp}{contact_mark}{src}{applied_mark}")
-        keyboard_rows.append([InlineKeyboardButton(f"📋 تفاصيل وظيفة {i}", callback_data=f"detail:{job['id']}")])
+        auto_mark = " 🤖" if job.get("auto_applied") else ""
+        lines.append(f"{i}. {job['title']} | {job.get('company') or '-'}{exp}{contact_mark}{src}{auto_mark}")
+        keyboard_rows.append([InlineKeyboardButton(f"📋 تفاصيل {i}", callback_data=f"detail:{job['id']}")])
     await context.bot.send_message(
         chat_id=chat_id,
         text="\n".join(lines),
         reply_markup=InlineKeyboardMarkup(keyboard_rows),
     )
 
+
 # ---------- الأوامر ----------
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = str(update.effective_chat.id)
-    if chat_id != TELEGRAM_CHAT_ID:
-        await update.message.reply_text("⚠️ هذا البوت شخصي لمالكه فقط.")
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    
+    # التحقق من الصلاحية
+    if not is_allowed_user(user_id):
+        await update.message.reply_text("⛔ هذا البوت للاستخدام الشخصي فقط.")
         return
     
+    logger.info(f"📩 استلمت /start من: {chat_id} (user_id: {user_id})")
+    
+    # تسجيل المستخدم
+    upsert_user_profile(str(user_id), {
+        "name": update.effective_user.full_name or "أحمد",
+        "chat_id": str(chat_id),
+        "phone": os.environ.get("APPLICANT_PHONE", ""),
+        "email": os.environ.get("APPLICANT_EMAIL", ""),
+    })
+    
     await update.message.reply_text(
-        "أهلاً! 👋\n"
-        "البوت ده مخصص ليك أنت بس لجمع وظائف المحاسبة وتقديمها تلقائيًا.\n\n"
-        f"chat_id: {chat_id}\n\n"
-        "الأوامر المتاحة:\n"
-        "/jobs — آخر الوظائف المتاحة\n"
-        "/applied — الوظائف اللي اتم التقديم عليها\n"
+        "أهلاً أحمد! 👋\n"
+        "البوت جاهز للتقديم على وظائف المحاسبة.\n\n"
+        "⚙️ الإعدادات الحالية:\n"
+        f"🤖 التقديم التلقائي: {'✅ مفعل' if AUTO_APPLY_ENABLED else '❌ معطل'}\n"
+        f"📱 رقم واتساب: {WHATSAPP_NUMBER}\n\n"
+        "📌 الأوامر المتاحة:\n"
+        "/jobs — عرض الوظائف الجديدة\n"
         "/search كلمة — بحث في الوظائف\n"
+        "/saved — الوظائف المحفوظة\n"
         "/stats — إحصائيات\n"
         "/setcv — رفع ملف CV (PDF)\n"
+        "/profile — عرض ملفك الشخصي\n"
         "/auto_on — تشغيل التقديم التلقائي\n"
-        "/auto_off — إيقاف التقديم التلقائي\n"
-        "/status — حالة البوت والإعدادات"
+        "/auto_off — إيقاف التقديم التلقائي"
     )
 
+
 async def jobs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if str(update.effective_chat.id) != TELEGRAM_CHAT_ID:
+    user_id = update.effective_user.id
+    if not is_allowed_user(user_id):
+        await update.message.reply_text("⛔ غير مسموح.")
         return
+    
     jobs = get_pending_jobs(limit=15)
     if not jobs:
         await update.message.reply_text("لا يوجد وظائف جديدة دلوقتي 🙏")
         return
-    await send_jobs_digest(context, update.effective_chat.id, jobs, f"📋 آخر الوظائف ({len(jobs)})")
+    await send_jobs_digest(context, update.effective_chat.id, jobs, f"📋 آخر الوظائف ({len(jobs)}):")
 
-async def applied_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if str(update.effective_chat.id) != TELEGRAM_CHAT_ID:
-        return
-    jobs = get_applied_jobs(limit=15)
-    if not jobs:
-        await update.message.reply_text("مفيش وظائف اتم التقديم عليها لسه.")
-        return
-    await send_jobs_digest(context, update.effective_chat.id, jobs, "📋 الوظائف اللي اتم التقديم عليها")
 
 async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if str(update.effective_chat.id) != TELEGRAM_CHAT_ID:
+    user_id = update.effective_user.id
+    if not is_allowed_user(user_id):
         return
+    
     if not context.args:
-        await update.message.reply_text("اكتب كلمة البحث، مثل: /search محاسب أول")
+        await update.message.reply_text("اكتب كلمة البحث، مثلاً:\n/search محاسب أول")
         return
     keyword = " ".join(context.args)
     jobs = search_jobs(keyword, limit=10)
     if not jobs:
         await update.message.reply_text(f'مفيش نتايج لـ "{keyword}".')
         return
-    await send_jobs_digest(context, update.effective_chat.id, jobs, f'🔍 نتايج البحث عن "{keyword}"')
+    await send_jobs_digest(context, update.effective_chat.id, jobs, f'🔍 نتايج "{keyword}":')
+
+
+async def saved_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_allowed_user(user_id):
+        return
+    jobs = get_jobs_by_status("saved", limit=15)
+    if not jobs:
+        await update.message.reply_text("مفيش وظائف محفوظة.")
+        return
+    for job in jobs:
+        await update.message.reply_text(
+            format_job_text(job), reply_markup=build_job_keyboard(job, show_actions=False)
+        )
+
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if str(update.effective_chat.id) != TELEGRAM_CHAT_ID:
+    user_id = update.effective_user.id
+    if not is_allowed_user(user_id):
         return
     s = get_stats()
-    auto_status = "✅ مفعل" if AUTO_APPLY_ENABLED else "❌ غير مفعل"
     text = (
-        f"📊 إحصائيات:\n"
-        f"إجمالي الوظائف: {s['total']}\n"
-        f"قيد الانتظار: {s['pending']}\n"
-        f"مقدم عليها: {s['applied']}\n"
-        f"محفوظة: {s['saved']}\n"
-        f"فيها وسيلة تواصل: {s['with_contact']}\n"
-        f"التقديم التلقائي: {auto_status}\n"
-        "التوزيع حسب المصدر:\n"
+        "📊 إحصائيات:\n"
+        f"📌 إجمالي الوظائف: {s['total']}\n"
+        f"⏳ قيد الانتظار: {s['pending']}\n"
+        f"💾 محفوظة: {s['saved']}\n"
+        f"🗑 متجاهلة: {s['ignored']}\n"
+        f"✅ تم التقديم: {s.get('applied', 0)}\n"
+        f"📞 فيها وسيلة تواصل: {s['with_contact']}\n"
     )
-    for src, count in s.get('by_source', {}).items():
-        text += f"  {src}: {count}\n"
     await update.message.reply_text(text)
 
+
 async def setcv_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if str(update.effective_chat.id) != TELEGRAM_CHAT_ID:
+    user_id = update.effective_user.id
+    if not is_allowed_user(user_id):
         return
     context.user_data["awaiting_cv"] = True
     await update.message.reply_text("📎 ابعتلي ملف الـ CV بصيغة PDF")
 
+
 async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if str(update.effective_chat.id) != TELEGRAM_CHAT_ID:
+    user_id = update.effective_user.id
+    if not is_allowed_user(user_id):
         return
     if not context.user_data.get("awaiting_cv"):
         return
     doc = update.message.document
     if not doc or doc.mime_type != "application/pdf":
-        await update.message.reply_text("محتاج PDF بس 🙏")
+        await update.message.reply_text("محتاج ملف PDF بس 🙏")
         return
     file_id = doc.file_id
     set_setting("cv_file_id", file_id)
+    upsert_user_profile(str(user_id), {"cv_file_id": file_id})
     context.user_data["awaiting_cv"] = False
     await update.message.reply_text("✅ تم حفظ الـ CV")
 
-async def auto_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if str(update.effective_chat.id) != TELEGRAM_CHAT_ID:
-        return
-    if not AUTO_APPLY_PHONE or not AUTO_APPLY_NAME:
-        await update.message.reply_text("⚠️ لازم تحدد APPLICANT_NAME و APPLICANT_PHONE في ملف .env")
-        return
-    # نكتب الإعداد في قاعدة البيانات بدل ما نعدل env
-    set_setting("auto_apply_enabled", "true")
-    await update.message.reply_text("✅ تم تشغيل التقديم التلقائي. البوت هيقدم على أي وظيفة فيها رقم واتساب تلقائيًا.")
 
-async def auto_off_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if str(update.effective_chat.id) != TELEGRAM_CHAT_ID:
+async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    if not is_allowed_user(int(user_id)):
         return
-    set_setting("auto_apply_enabled", "false")
-    await update.message.reply_text("❌ تم إيقاف التقديم التلقائي.")
-
-async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if str(update.effective_chat.id) != TELEGRAM_CHAT_ID:
+    profile = get_user_profile(user_id)
+    if not profile:
+        await update.message.reply_text("مفيش ملف شخصي. استخدم /start")
         return
-    cv_file_id = get_setting("cv_file_id")
-    auto_enabled = get_setting("auto_apply_enabled") == "true"
     text = (
-        "⚙️ حالة البوت:\n"
-        f"CV: {'✅ موجود' if cv_file_id else '❌ غير مرفوع'}\n"
-        f"تقديم تلقائي: {'✅ مفعل' if auto_enabled else '❌ غير مفعل'}\n"
-        f"المستخدم: {APPLICANT_NAME or 'غير محدد'}\n"
-        f"رقم واتساب: {APPLICANT_PHONE or 'غير محدد'}\n"
-        f"الإيميل: {APPLICANT_EMAIL or 'غير محدد'}"
+        "👤 ملفك الشخصي:\n"
+        f"الاسم: {profile.get('name', 'غير محدد')}\n"
+        f"الخبرة: {profile.get('experience_years', 0)} سنوات\n"
+        f"المهارات: {', '.join(profile.get('skills', [])) or 'لا يوجد'}\n"
+        f"المناطق: {', '.join(profile.get('preferred_locations', [])) or 'لا يوجد'}\n"
+        f"الراتب المتوقع: {profile.get('expected_salary', 'غير محدد')}\n"
+        f"📱 الهاتف: {profile.get('phone', 'غير محدد')}\n"
+        f"📧 الإيميل: {profile.get('email', 'غير محدد')}\n"
+        f"CV: {'✅ موجود' if profile.get('cv_file_id') else '❌ غير مرفوع'}"
     )
     await update.message.reply_text(text)
 
+
+async def auto_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_allowed_user(user_id):
+        return
+    # تحديث الإعداد في قاعدة البيانات
+    upsert_user_profile(str(user_id), {"auto_apply": True})
+    await update.message.reply_text("✅ تم تشغيل التقديم التلقائي")
+
+
+async def auto_off_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_allowed_user(user_id):
+        return
+    upsert_user_profile(str(user_id), {"auto_apply": False})
+    await update.message.reply_text("❌ تم إيقاف التقديم التلقائي")
+
+
 # ---------- الأزرار ----------
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    chat_id = str(update.effective_chat.id)
-    if chat_id != TELEGRAM_CHAT_ID:
-        await query.message.reply_text("⚠️ هذا البوت شخصي.")
+    user_id = update.effective_user.id
+    if not is_allowed_user(user_id):
+        await update.message.reply_text("⛔ غير مسموح")
         return
     
+    query = update.callback_query
+    await query.answer()
     action, job_id = query.data.split(":", 1)
-    job = get_job_by_id(job_id)
-    if not job:
-        await query.message.reply_text("الوظيفة مش موجودة.")
-        return
 
     if action == "detail":
-        await query.message.reply_text(format_job_text(job), reply_markup=build_job_keyboard(job))
+        job = get_job_by_id(job_id)
+        if not job:
+            await query.message.reply_text("الوظيفة مش موجودة.")
+            return
+        await query.message.reply_text(
+            format_job_text(job), reply_markup=build_job_keyboard(job)
+        )
+        return
+
+    if action == "auto_apply":
+        job = get_job_by_id(job_id)
+        if not job:
+            await query.message.reply_text("الوظيفة مش موجودة.")
+            return
+        
+        if not job.get("contact_phone"):
+            await query.message.reply_text("مفيش رقم واتساب للتقديم.")
+            return
+        
+        # تنفيذ التقديم التلقائي
+        result = await auto_apply_whatsapp(job, context.bot, query.message.chat_id)
+        
+        if result["success"]:
+            update_status(job_id, "applied")
+            await query.edit_message_reply_markup(reply_markup=None)
+            await query.message.reply_text(f"✅ تم التقديم على {job['title']} بنجاح!")
+        else:
+            await query.message.reply_text(f"❌ فشل التقديم: {result['error']}")
         return
 
     if action == "letter":
+        job = get_job_by_id(job_id)
+        if not job:
+            await query.message.reply_text("مش لاقي تفاصيل الوظيفة.")
+            return
         await query.message.reply_text(build_cover_letter(job))
         return
 
     if action in ("prep_wa", "prep_email"):
+        job = get_job_by_id(job_id)
+        if not job:
+            await query.message.reply_text("الوظيفة مش موجودة.")
+            return
+
         cv_file_id = get_setting("cv_file_id")
         if cv_file_id:
-            await context.bot.send_document(chat_id, cv_file_id, caption="📎 الـ CV")
+            await context.bot.send_document(
+                chat_id=query.message.chat_id, document=cv_file_id, caption="📎 الـ CV"
+            )
+
         if action == "prep_wa":
             link = build_whatsapp_link(job)
             label = "📩 فتح واتساب"
         else:
             link = build_mailto_link(job)
             label = "📧 فتح الإيميل"
-        if not link:
-            await query.message.reply_text("مفيش وسيلة تواصل مباشرة.")
-            return
-        await query.message.reply_text(build_cover_letter(job), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(label, url=link)]]))
-        return
 
-    if action == "auto_apply":
-        # تقديم تلقائي
-        auto_enabled = get_setting("auto_apply_enabled") == "true"
-        if not auto_enabled:
-            await query.message.reply_text("⚠️ التقديم التلقائي غير مفعل. استخدم /auto_on")
+        if not link:
+            await query.message.reply_text("مفيش وسيلة تواصل.")
             return
-        if not job.get("contact_phone") and not job.get("contact_email"):
-            await query.message.reply_text("⚠️ مفيش وسيلة تواصل في الوظيفة دي.")
-            return
-        
-        result = auto_apply_job(job)
-        if result.get("success"):
-            mark_applied(job_id)
-            await query.message.reply_text(f"✅ {result['message']}")
-        else:
-            await query.message.reply_text(f"❌ فشل التقديم: {result['message']}")
+
+        await query.message.reply_text(
+            build_cover_letter(job),
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(label, url=link)]]),
+        )
         return
 
     if action == "save":
@@ -280,71 +369,106 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("🗑 تم التجاهل.")
         return
 
-# ---------- الإشعار الدوري ----------
+
+# ---------- الإشعار الدوري مع التقديم التلقائي ----------
+
 async def push_new_jobs(context: ContextTypes.DEFAULT_TYPE):
-    if not TELEGRAM_CHAT_ID:
+    if not ALLOWED_USER_IDS:
         return
-    jobs = get_unnotified_jobs(limit=20)
-    if not jobs:
-        return
-    try:
-        # التقديم التلقائي للوظائف الجديدة
-        auto_enabled = get_setting("auto_apply_enabled") == "true"
-        if auto_enabled:
-            for job in jobs:
-                if (job.get("contact_phone") or job.get("contact_email")):
-                    result = auto_apply_job(job)
-                    if result.get("success"):
-                        mark_applied(job["id"])
-                        await context.bot.send_message(TELEGRAM_CHAT_ID, f"✅ تم التقديم على: {job['title']} - {job['company']}")
+    
+    for user_id in ALLOWED_USER_IDS:
+        profile = get_user_profile(user_id)
+        if not profile:
+            continue
         
-        # إرسال القائمة
-        await send_jobs_digest(context, TELEGRAM_CHAT_ID, jobs, f"🆕 وظائف جديدة ({len(jobs)})")
+        chat_id = profile.get("chat_id")
+        if not chat_id:
+            continue
+        
+        auto_apply_enabled = profile.get("auto_apply", AUTO_APPLY_ENABLED)
+        jobs = get_unnotified_jobs(limit=20)
+        
+        if not jobs:
+            continue
+        
+        # التقديم التلقائي
+        if auto_apply_enabled:
+            for job in jobs:
+                if job.get("contact_phone") and not job.get("auto_applied"):
+                    result = await auto_apply_whatsapp(job, context.bot, chat_id)
+                    if result["success"]:
+                        update_status(job["id"], "applied")
+                        mark_notified(job["id"])
+                        await context.bot.send_message(
+                            chat_id=chat_id,
+                            text=f"✅ تم التقديم تلقائياً على: {job['title']} - {job['company']}"
+                        )
+                    else:
+                        logger.error(f"فشل التقديم على {job['title']}: {result['error']}")
+        
+        # إرسال الدايجست
+        await send_jobs_digest(context, chat_id, jobs, f"🆕 وظائف جديدة ({len(jobs)}):")
         for job in jobs:
-            if not job.get("applied"):
+            if not job.get("auto_applied"):
                 mark_notified(job["id"])
-    except Exception as e:
-        logger.error(f"فشل الإشعار: {e}")
+
+
+# ---------- معالج الأخطاء ----------
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"⚠️ خطأ: {context.error}")
 
+
 # ---------- التشغيل ----------
+
 async def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN مطلوب")
+    
+    # التأكد من وجود المستخدم المسموح
+    if not ALLOWED_USER_IDS or not ALLOWED_USER_IDS[0]:
+        logger.warning("⚠️ ALLOWED_USER_IDS غير محدد - البوت مش هيشتغل لأي حد")
+        return
+
     app = Application.builder().token(BOT_TOKEN).build()
+    
     await app.bot.delete_webhook()
     
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("jobs", jobs_command))
-    app.add_handler(CommandHandler("applied", applied_command))
     app.add_handler(CommandHandler("search", search_command))
+    app.add_handler(CommandHandler("saved", saved_command))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("setcv", setcv_command))
+    app.add_handler(CommandHandler("profile", profile_command))
     app.add_handler(CommandHandler("auto_on", auto_on_command))
     app.add_handler(CommandHandler("auto_off", auto_off_command))
-    app.add_handler(CommandHandler("status", status_command))
     app.add_handler(MessageHandler(filters.Document.ALL, document_handler))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_error_handler(error_handler)
-    
+
     app.job_queue.run_repeating(push_new_jobs, interval=NOTIFY_INTERVAL_SECONDS, first=15)
-    logger.info("البوت شغال...")
+
+    logger.info(f"🤖 البوت شغال للمستخدم: {ALLOWED_USER_IDS[0]}")
     
     await app.initialize()
     await app.start()
-    await app.updater.start_polling(drop_pending_updates=True)
+    await app.updater.start_polling(
+        drop_pending_updates=True,
+        allowed_updates=None,
+        bootstrap_retries=-1,
+    )
     
     try:
         while True:
             await asyncio.sleep(3600)
     except (KeyboardInterrupt, SystemExit):
-        logger.info("تم الإيقاف")
+        logger.info("تم إيقاف البوت")
     finally:
         await app.updater.stop()
         await app.stop()
         await app.shutdown()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
