@@ -1,3 +1,4 @@
+# scraper/manager.py
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -6,7 +7,7 @@ from providers.forasna import ForasnaProvider
 from providers.bayt import BaytProvider
 from providers.indeed import IndeedProvider
 
-# يمكنك إضافة مزودات أخرى هنا
+
 def get_all_providers():
     location_filter = [loc.strip() for loc in os.environ.get("LOCATION_FILTER", "Cairo,Giza").split(',') if loc.strip()]
     max_exp = os.environ.get("MAX_EXPERIENCE_YEARS")
@@ -20,6 +21,7 @@ def get_all_providers():
     ]
     return providers
 
+
 def collect_all_jobs(search_term="محاسب", max_pages=3):
     providers = get_all_providers()
     all_jobs = []
@@ -31,6 +33,7 @@ def collect_all_jobs(search_term="محاسب", max_pages=3):
                 all_jobs.extend(jobs)
             except Exception as e:
                 print(f"⚠️ فشل أحد المزودات: {e}")
+
     # إزالة التكرار حسب الرابط
     seen = set()
     unique = []
@@ -40,8 +43,8 @@ def collect_all_jobs(search_term="محاسب", max_pages=3):
             unique.append(job)
     return unique
 
+
 def main():
-    # استيراد دوال قاعدة البيانات (يجب أن تكون في مسار قابل للاستيراد)
     sys.path.append(os.path.join(os.path.dirname(__file__), "..", "bot"))
     from db import insert_jobs, expire_old_jobs
     from dotenv import load_dotenv
@@ -51,6 +54,7 @@ def main():
     max_pages = int(os.environ.get("MAX_PAGES", 3))
     jobs = collect_all_jobs(search_term, max_pages)
     print(f"✅ تم جمع {len(jobs)} وظيفة من جميع المصادر")
+
     try:
         count = insert_jobs(jobs)
         print(f"✅ تم حفظ {count} وظيفة جديدة في Supabase")
@@ -67,6 +71,26 @@ def main():
                 writer.writeheader()
                 writer.writerows(jobs)
         print("💾 تم حفظ الوظائف في all_jobs.csv محلياً")
+
+    # إرسال إشعار تليجرام (اختياري)
+    bot_token = os.environ.get("BOT_TOKEN")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    if bot_token and chat_id and os.environ.get("NOTIFY_ON_SUCCESS", "true").lower() == "true":
+        import requests
+        contacts_found = sum(1 for j in jobs if j.get("contact_email") or j.get("contact_phone"))
+        text = (
+            f"✅ تم جمع {len(jobs)} وظيفة محاسبة اليوم ({contacts_found} منهم فيها وسيلة تواصل مباشرة).\n"
+            f"المصادر: {', '.join(set(j.get('source', 'unknown') for j in jobs))}"
+        )
+        try:
+            requests.post(
+                f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                data={"chat_id": chat_id, "text": text},
+                timeout=10,
+            )
+        except:
+            pass
+
 
 if __name__ == "__main__":
     main()
