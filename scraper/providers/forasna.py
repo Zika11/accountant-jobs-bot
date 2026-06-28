@@ -1,3 +1,4 @@
+# scraper/providers/forasna.py
 import re
 import time
 import requests
@@ -22,7 +23,6 @@ class ForasnaProvider(JobProvider):
                 print(f"⚠️ Forasna صفحة {page} فشلت: {e}")
                 break
             soup = BeautifulSoup(html, 'html.parser')
-            # نفترض أن كل وظيفة في عنصر <div class="job-item"> أو <div class="card">
             for item in soup.select('.job-item, .card, .job-card'):
                 title_elem = item.select_one('.job-title a, .title a, h2 a')
                 if not title_elem:
@@ -35,7 +35,6 @@ class ForasnaProvider(JobProvider):
                 company = company.text.strip() if company else ''
                 location = item.select_one('.location, .city')
                 location = location.text.strip() if location else ''
-                # الخبرة (قد تكون موجودة)
                 exp_elem = item.select_one('.experience, .exp')
                 experience = exp_elem.text.strip() if exp_elem else ''
                 min_exp = None
