@@ -1,4 +1,8 @@
 # scraper/manager.py
+"""
+مدير جمع الوظائف من جميع المصادر
+"""
+
 import os
 import sys
 import time
@@ -31,7 +35,7 @@ except ImportError as e:
     print(f"⚠️ مصر providers مش موجودة: {e}")
     EGYPT_PROVIDERS_AVAILABLE = False
 
-from db import insert_jobs, expire_old_jobs
+from db import insert_jobs, expire_old_jobs, log_scraper_error
 
 
 def get_all_providers():
@@ -66,6 +70,9 @@ def collect_all_jobs(search_term="محاسب", max_pages=3):
     failed_providers = []
 
     print(f"🔄 بدء جمع الوظائف من {len(providers)} مصدر...")
+    print(f"🔍 كلمة البحث: {search_term}")
+    print(f"📄 عدد الصفحات: {max_pages}")
+    print("-" * 50)
 
     with ThreadPoolExecutor(max_workers=min(len(providers), 5)) as executor:
         futures = {executor.submit(p.fetch_jobs, search_term, max_pages): p.source_name for p in providers}
@@ -77,12 +84,12 @@ def collect_all_jobs(search_term="محاسب", max_pages=3):
                 all_jobs.extend(jobs)
                 print(f"✅ {source}: {len(jobs)} وظيفة")
             except Exception as e:
-                error_msg = f"{source} فشل: {str(e)}"
+                error_msg = f"{source} فشل: {str(e)[:100]}"
                 print(f"⚠️ {error_msg}")
                 failed_providers.append({
                     "source": source,
-                    "error": str(e),
-                    "traceback": traceback.format_exc(),
+                    "error": str(e)[:500],
+                    "traceback": traceback.format_exc()[:1000],
                     "timestamp": datetime.now().isoformat()
                 })
 
@@ -96,13 +103,15 @@ def collect_all_jobs(search_term="محاسب", max_pages=3):
 
     # تسجيل الأخطاء في قاعدة البيانات
     if failed_providers:
-        try:
-            from db import get_client
-            client = get_client()
-            for fail in failed_providers:
-                client.table("scraper_logs").insert(fail).execute()
-        except Exception as e:
-            print(f"⚠️ فشل تسجيل الأخطاء: {e}")
+        for fail in failed_providers:
+            try:
+                log_scraper_error(
+                    source=fail["source"],
+                    error=fail["error"],
+                    traceback_text=fail["traceback"]
+                )
+            except Exception as e:
+                print(f"⚠️ فشل تسجيل خطأ {fail['source']}: {e}")
 
     return unique
 
@@ -114,10 +123,6 @@ def main():
 
     search_term = os.environ.get("SEARCH_TERM", "محاسب")
     max_pages = int(os.environ.get("MAX_PAGES", 3))
-
-    print(f"🔍 البحث عن: {search_term}")
-    print(f"📄 عدد الصفحات: {max_pages}")
-    print("-" * 50)
 
     start_time = time.time()
     jobs = collect_all_jobs(search_term, max_pages)
