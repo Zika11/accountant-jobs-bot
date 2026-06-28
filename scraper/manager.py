@@ -3,6 +3,8 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from providers.wuzzuf import WuzzufProvider
 from providers.forasna import ForasnaProvider
+from providers.bayt import BaytProvider
+from providers.indeed import IndeedProvider
 
 # يمكنك إضافة مزودات أخرى هنا
 def get_all_providers():
@@ -13,6 +15,8 @@ def get_all_providers():
     providers = [
         WuzzufProvider(location_filter=location_filter, max_experience_years=max_exp),
         ForasnaProvider(max_experience_years=max_exp),
+        BaytProvider(max_experience_years=max_exp),
+        IndeedProvider(max_experience_years=max_exp),
     ]
     return providers
 
