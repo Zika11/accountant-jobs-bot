@@ -1,0 +1,5 @@
+requests
+beautifulsoup4
+supabase==2.7.4
+python-telegram-bot[job-queue]==21.6
+python-dotenv
