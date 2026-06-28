@@ -1,58 +1,81 @@
 # bot/auto_apply.py
 """
-تقديم تلقائي على الوظائف عبر واتساب (مساعد للمستخدم، لا يرسل تلقائياً)
+تقديم تلقائي على الوظائف عبر واتساب
 """
 
 import os
 import re
 import logging
 from urllib.parse import quote
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+from message_templates import build_cover_letter
 
 logger = logging.getLogger(__name__)
 
-# جلب رقم واتساب الاحتياطي من متغيرات البيئة (يستخدم لو مفيش رقم في الوظيفة)
+# رقم واتساب الاحتياطي من البيئة (يُستخدم فقط لو الوظيفة مفيهاش رقم)
 WHATSAPP_NUMBER = os.environ.get("WHATSAPP_NUMBER", "")
+
+
+def clean_phone_number(phone: str) -> str:
+    """
+    تنظيف رقم الهاتف وتحويله إلى صيغة دولية (مصر)
+    مثال: 01091882926 -> 201091882926
+    """
+    if not phone:
+        return ""
+
+    # إزالة كل ما هو ليس رقم
+    digits = re.sub(r"\D", "", phone)
+
+    # إذا كان الرقم فارغاً
+    if not digits:
+        return ""
+
+    # إذا كان الرقم يبدأ بـ 0 (مثل 010...)، نحذف الـ 0 ونضيف 20
+    if digits.startswith("0"):
+        digits = "20" + digits[1:]
+
+    # إذا كان الرقم يبدأ بـ 20، نتركه كما هو (دولي)
+    elif digits.startswith("20"):
+        pass
+
+    # إذا كان الرقم يبدأ بـ 2 (مثل 2010...)، نضيف 0 في البداية (نادر)
+    elif digits.startswith("2") and not digits.startswith("20"):
+        digits = "20" + digits
+
+    # إذا كان الرقم يبدأ بـ 1 (مثل 1091882926)، نضيف 20
+    elif digits.startswith("1"):
+        digits = "20" + digits
+
+    # إذا كان الرقم طويلاً (12 رقم)، نأخذ آخر 11 رقم
+    if len(digits) > 12:
+        digits = digits[-11:]
+
+    return digits
 
 
 async def auto_apply_whatsapp(job: dict, bot, chat_id: int) -> dict:
     """
-    يقوم بتجهيز رابط واتساب جاهز للتقديم على الوظيفة:
+    يقوم بالتقديم على الوظيفة عبر واتساب:
     - يبعت رابط واتساب جاهز بالرسالة
     - يبعت الـ CV (لو موجود)
-    - يسجل التقديم في قاعدة البيانات (يتم التحديث من خارج الدالة)
+    - يسجل التقديم في قاعدة البيانات
     """
     try:
-        phone = job.get("contact_phone")
+        # الحصول على رقم الهاتف من الوظيفة
+        phone = job.get("contact_phone") or WHATSAPP_NUMBER
+
         if not phone:
-            # استخدام رقم احتياطي من env
-            if WHATSAPP_NUMBER:
-                phone = WHATSAPP_NUMBER
-                logger.info(f"⚠️ استخدام رقم احتياطي: {phone}")
-            else:
-                return {"success": False, "error": "مفيش رقم واتساب في الوظيفة"}
+            return {"success": False, "error": "مفيش رقم واتساب في الوظيفة"}
 
-        # تنظيف الرقم (إزالة كل ما ليس رقماً)
-        clean_phone = re.sub(r"\D", "", phone)
-
-        # تحويل الرقم إلى صيغة دولية (مصر)
-        if clean_phone.startswith("0"):
-            # 01012345678 → 201012345678
-            clean_phone = "20" + clean_phone[1:]
-        elif clean_phone.startswith("20"):
-            # 201012345678 → 201012345678 (كما هو)
-            pass
-        else:
-            # لو بدأ بأي شيء آخر، نعتبره مصري ونضيف 20
-            if len(clean_phone) == 11 and clean_phone.startswith("10"):
-                clean_phone = "20" + clean_phone
-            elif len(clean_phone) == 10 and clean_phone.startswith("1"):
-                clean_phone = "20" + clean_phone
-            else:
-                clean_phone = "20" + clean_phone
+        # تنظيف الرقم
+        clean_phone = clean_phone_number(phone)
+        if not clean_phone:
+            return {"success": False, "error": "رقم الهاتف غير صالح"}
 
         # بناء رسالة التقديم
-        from message_templates import build_cover_letter
         message = build_cover_letter(job)
         encoded_msg = quote(message)
         wa_link = f"https://wa.me/{clean_phone}?text={encoded_msg}"
@@ -60,10 +83,12 @@ async def auto_apply_whatsapp(job: dict, bot, chat_id: int) -> dict:
         # إرسال رابط واتساب للمستخدم
         await bot.send_message(
             chat_id=chat_id,
-            text=f"🚀 جاهز للتقديم على **{job['title']}** في {job.get('company', '')}\n\n"
-                 f"📱 اضغط على الزر لفتح واتساب وإرسال الرسالة:",
+            text=(
+                f"🚀 جاهز للتقديم على **{job['title']}** في {job.get('company', 'شركة')}\n\n"
+                f"📱 اضغط على الزر لفتح واتساب وإرسال الرسالة:"
+            ),
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("📱 افتح واتساب", url=wa_link)
+                InlineKeyboardButton("📱 فتح واتساب", url=wa_link)
             ]]),
             parse_mode="Markdown"
         )
@@ -71,8 +96,12 @@ async def auto_apply_whatsapp(job: dict, bot, chat_id: int) -> dict:
         # إرسال الـ CV لو موجود
         cv_file_id = os.environ.get("CV_FILE_ID")
         if not cv_file_id:
-            from db import get_setting
-            cv_file_id = get_setting("cv_file_id")
+            # جلب من قاعدة البيانات
+            try:
+                from db import get_setting
+                cv_file_id = get_setting("cv_file_id")
+            except:
+                pass
 
         if cv_file_id:
             await bot.send_document(
@@ -81,8 +110,14 @@ async def auto_apply_whatsapp(job: dict, bot, chat_id: int) -> dict:
                 caption=f"📎 الـ CV الخاص بك - للتقديم على {job['title']}"
             )
 
-        logger.info(f"✅ تم تجهيز التقديم على {job['title']} عبر واتساب: {clean_phone}")
+        # تحديث الحالة في قاعدة البيانات (مرة واحدة فقط)
+        try:
+            from db import update_status
+            update_status(job["id"], "applied")
+        except Exception as e:
+            logger.error(f"⚠️ فشل تحديث الحالة: {e}")
 
+        logger.info(f"✅ تم التقديم على {job['title']} عبر واتساب: {clean_phone}")
         return {"success": True, "link": wa_link}
 
     except Exception as e:
