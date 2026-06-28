@@ -96,7 +96,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     logger.info(f"📩 استلمت /start من: {chat_id} (user_id: {user_id})")
 
-    # تسجيل المستخدم تلقائياً (إنشاء ملف شخصي فارغ)
     profile = get_user_profile(user_id)
     if not profile:
         upsert_user_profile(user_id, {"name": update.effective_user.full_name or ""})
@@ -115,7 +114,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/stats — إحصائيات عامة\n"
         "/setcv — حفظ ملف CV (PDF)\n"
         "/profile — عرض أو تحديث ملفك الشخصي\n"
-        "/recommend — توصيات ذكية بناءً على ملفك الشخصي"
+        "/update name/experience/skills/locations/salary — تحديث حقل معين"
     )
 
 
@@ -192,7 +191,6 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     file_id = doc.file_id
     user_id = str(update.effective_user.id)
-    # حفظ file_id في settings (للاستخدام العام) وفي user_profile
     set_setting("cv_file_id", file_id)
     upsert_user_profile(user_id, {"cv_file_id": file_id})
     context.user_data["awaiting_cv"] = False
@@ -360,6 +358,11 @@ def main():
         raise RuntimeError("لازم تحدد BOT_TOKEN في متغيرات البيئة")
 
     app = Application.builder().token(BOT_TOKEN).build()
+
+    # ✅ إزالة أي Webhook قديم قبل بدء الـ Polling (بيحل مشكلة Conflict)
+    import asyncio
+    asyncio.run(app.bot.delete_webhook())
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("jobs", jobs_command))
     app.add_handler(CommandHandler("search", search_command))
