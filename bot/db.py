@@ -1,3 +1,4 @@
+# bot/db.py
 """
 اتصال بسيط بقاعدة بيانات Supabase
 بيستخدمه الـ scraper (للحفظ) والبوت (للقراءة والتحديث)
@@ -19,9 +20,16 @@ def get_client() -> Client:
 
 
 def insert_jobs(jobs: list[dict]) -> int:
-    """يضيف وظائف جديدة، ويتجاهل أي وظيفة موجودة بالفعل (نفس الرابط)"""
+    """
+    يضيف وظائف جديدة، ويتجاهل أي وظيفة موجودة بالفعل (نفس الرابط).
+    يتوقع أن كل وظيفة تحتوي على مفتاح 'source' (إن لم يكن، يضع 'unknown').
+    """
     if not jobs:
         return 0
+    # تأكد من وجود source
+    for job in jobs:
+        if 'source' not in job:
+            job['source'] = 'unknown'
     client = get_client()
     result = client.table("jobs").upsert(jobs, on_conflict="url", ignore_duplicates=True).execute()
     return len(result.data) if result.data else 0
@@ -74,14 +82,14 @@ def get_job_by_id(job_id: str) -> dict | None:
 
 
 def search_jobs(keyword: str, limit: int = 15) -> list[dict]:
-    """بحث بكلمة في العنوان أو الشركة أو المكان"""
+    """بحث بكلمة في العنوان أو الشركة أو المكان أو المصدر"""
     client = get_client()
     keyword = keyword.replace(",", " ").replace("%", " ").strip()
     pattern = f"%{keyword}%"
     result = (
         client.table("jobs")
         .select("*")
-        .or_(f"title.ilike.{pattern},company.ilike.{pattern},location.ilike.{pattern}")
+        .or_(f"title.ilike.{pattern},company.ilike.{pattern},location.ilike.{pattern},source.ilike.{pattern}")
         .order("created_at", desc=True)
         .limit(limit)
         .execute()
@@ -91,8 +99,14 @@ def search_jobs(keyword: str, limit: int = 15) -> list[dict]:
 
 def get_stats() -> dict:
     client = get_client()
-    result = client.table("jobs").select("status,contact_email,contact_phone").execute()
+    result = client.table("jobs").select("status,contact_email,contact_phone,source").execute()
     rows = result.data or []
+    # إحصائيات إضافية حسب المصدر
+    source_counts = {}
+    for r in rows:
+        src = r.get('source', 'unknown')
+        source_counts[src] = source_counts.get(src, 0) + 1
+
     return {
         "total": len(rows),
         "pending": sum(1 for r in rows if r.get("status") == "pending"),
@@ -100,6 +114,7 @@ def get_stats() -> dict:
         "ignored": sum(1 for r in rows if r.get("status") == "ignored"),
         "expired": sum(1 for r in rows if r.get("status") == "expired"),
         "with_contact": sum(1 for r in rows if r.get("contact_email") or r.get("contact_phone")),
+        "by_source": source_counts,  # إحصائيات إضافية حسب المصدر
     }
 
 
