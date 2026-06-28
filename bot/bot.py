@@ -52,7 +52,7 @@ NOTIFY_INTERVAL_SECONDS = int(os.environ.get("NOTIFY_INTERVAL_SECONDS", 6 * 60 *
 # ---------- عرض الوظيفة ----------
 
 def format_job_text(job: dict) -> str:
-    lines = [f"📌 *{job['title']}*"]
+    lines = [f"📌 {job['title']}"]
     if job.get("company"):
         lines.append(f"🏢 {job['company']}")
     if job.get("location"):
@@ -110,7 +110,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "أهلاً! 👋\n"
         "البوت ده هيبعتلك وظائف محاسبة جديدة بشكل دوري.\n\n"
-        f"chat_id بتاعك هو: `{chat_id}`\n"
+        f"chat_id بتاعك هو: {chat_id}\n"
         "لو دي أول مرة، خد الرقم ده وحطه في متغير TELEGRAM_CHAT_ID في الـ Railway "
         "عشان البوت يعرف يبعتلك تلقائيًا، وبعدين أعمل Redeploy.\n\n"
         "الأوامر المتاحة:\n"
@@ -119,8 +119,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/saved — الوظائف المحفوظة\n"
         "/ignored — الوظائف المتجاهلة\n"
         "/stats — إحصائيات عامة\n"
-        "/setcv — حفظ ملف CV عشان يتبعت جنب كل رسالة",
-        parse_mode="Markdown",
+        "/setcv — حفظ ملف CV عشان يتبعت جنب كل رسالة"
     )
 
 
@@ -151,7 +150,7 @@ async def saved_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     for job in jobs:
         await update.message.reply_text(
-            format_job_text(job), parse_mode="Markdown", reply_markup=build_job_keyboard(job, show_actions=False)
+            format_job_text(job), reply_markup=build_job_keyboard(job, show_actions=False)
         )
 
 
@@ -162,7 +161,7 @@ async def ignored_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     for job in jobs:
         await update.message.reply_text(
-            format_job_text(job), parse_mode="Markdown", reply_markup=build_job_keyboard(job, show_actions=False)
+            format_job_text(job), reply_markup=build_job_keyboard(job, show_actions=False)
         )
 
 
@@ -210,7 +209,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text("معلش، الوظيفة دي مش موجودة دلوقتي.")
             return
         await query.message.reply_text(
-            format_job_text(job), parse_mode="Markdown", reply_markup=build_job_keyboard(job)
+            format_job_text(job), reply_markup=build_job_keyboard(job)
         )
         return
 
@@ -281,6 +280,12 @@ async def push_new_jobs(context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"فشل إرسال تنبيه الوظائف الجديدة: {e}")
 
 
+# ---------- معالج الأخطاء العام ----------
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    logger.error(f"⚠️ حصل خطأ: {context.error}")
+
+
 def main():
     if not BOT_TOKEN:
         raise RuntimeError("لازم تحدد BOT_TOKEN في متغيرات البيئة")
@@ -295,6 +300,7 @@ def main():
     app.add_handler(CommandHandler("setcv", setcv_command))
     app.add_handler(MessageHandler(filters.Document.ALL, document_handler))
     app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_error_handler(error_handler)
 
     app.job_queue.run_repeating(push_new_jobs, interval=NOTIFY_INTERVAL_SECONDS, first=15)
 
