@@ -1,14 +1,6 @@
 """
 بوت تليجرام لمتابعة وظائف المحاسبة (متعدد المصادر)
-
-الأوامر:
-- /start    تسجيل + يطلعلك chat_id بتاعك
-- /jobs     آخر الوظائف المتاحة (رسالة واحدة مجمّعة + تفاصيل عند الطلب)
-- /search   بحث بكلمة معينة، مثلاً: /search محاسب أول
-- /saved    الوظائف المحفوظة
-- /ignored  الوظائف المتجاهلة
-- /stats    إحصائيات عامة (مع توزيع حسب المصدر)
-- /setcv    حفظ ملف CV (PDF) عشان يتبعت جنب كل رسالة تقديم
+مع توصيات ذكية وملف شخصي
 """
 
 import logging
@@ -33,8 +25,12 @@ from db import (
     set_setting,
     mark_notified,
     update_status,
+    get_user_profile,
+    upsert_user_profile,
+    update_user_profile,
 )
 from message_templates import build_cover_letter, build_whatsapp_link, build_mailto_link
+from ai_matcher import analyze_job_fit  # سننشئ هذا الملف لاحقاً
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -45,7 +41,6 @@ NOTIFY_INTERVAL_SECONDS = int(os.environ.get("NOTIFY_INTERVAL_SECONDS", 6 * 60 *
 
 
 # ---------- عرض الوظيفة ----------
-
 def format_job_text(job: dict) -> str:
     lines = [f"📌 {job['title']}"]
     if job.get("company"):
@@ -59,7 +54,6 @@ def format_job_text(job: dict) -> str:
     if job.get("source"):
         lines.append(f"🌐 المصدر: {job['source']}")
     return "\n".join(lines)
-
 
 def build_job_keyboard(job: dict, show_actions: bool = True) -> InlineKeyboardMarkup:
     buttons = [[InlineKeyboardButton("🔗 فتح الوظيفة", url=job["url"])]]
@@ -81,9 +75,7 @@ def build_job_keyboard(job: dict, show_actions: bool = True) -> InlineKeyboardMa
         ])
     return InlineKeyboardMarkup(buttons)
 
-
 async def send_jobs_digest(context: ContextTypes.DEFAULT_TYPE, chat_id, jobs: list[dict], header: str):
-    """رسالة واحدة فيها كل الوظائف، وكل وظيفة بزرار 'تفاصيل' يفتح كارتها كاملة"""
     lines = [header, ""]
     keyboard_rows = []
     for i, job in enumerate(jobs, start=1):
@@ -99,15 +91,18 @@ async def send_jobs_digest(context: ContextTypes.DEFAULT_TYPE, chat_id, jobs: li
         reply_markup=InlineKeyboardMarkup(keyboard_rows),
     )
 
-
-# ---------- الأوامر ----------
-
+# ---------- الأوامر الأساسية ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
+    user_id = str(update.effective_user.id)
     logger.info(f"📩 استلمت /start من: {chat_id}")
+    # تسجيل المستخدم في قاعدة البيانات (إذا لم يكن موجوداً)
+    profile = get_user_profile(user_id)
+    if not profile:
+        upsert_user_profile({"user_id": user_id})
     await update.message.reply_text(
         "أهلاً! 👋\n"
-        "البوت ده هيبعتلك وظائف محاسبة جديدة من منصات متعددة (Wuzzuf, Forasna وغيرها) بشكل دوري.\n\n"
+        "البوت ده هيبعتلك وظائف محاسبة جديدة من منصات متعددة (Wuzzuf, Forasna, Bayt, Indeed) بشكل دوري.\n\n"
         f"chat_id بتاعك هو: {chat_id}\n"
         "لو دي أول مرة، خد الرقم ده وحطه في متغير TELEGRAM_CHAT_ID في الـ Railway "
         "عشان البوت يعرف يبعتلك تلقائيًا، وبعدين أعمل Redeploy.\n\n"
@@ -117,9 +112,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/saved — الوظائف المحفوظة\n"
         "/ignored — الوظائف المتجاهلة\n"
         "/stats — إحصائيات عامة\n"
-        "/setcv — حفظ ملف CV عشان يتبعت جنب كل رسالة"
+        "/setcv — حفظ ملف CV\n"
+        "/setprofile — تعيين بياناتك الشخصية (الاسم، الخبرة، المهارات)\n"
+        "/recommend — توصيات ذكية حسب ملفك الشخصي\n"
+        "استخدم الأزرار أدناه للتنقل بسهولة:",
+        reply_markup=main_menu_keyboard()
     )
 
+def main_menu_keyboard():
+    keyboard = [
+        [InlineKeyboardButton("📋 وظائف جديدة", callback_data="menu_jobs")],
+        [InlineKeyboardButton("🔍 بحث متقدم", callback_data="menu_search")],
+        [InlineKeyboardButton("👤 ملفي الشخصي", callback_data="menu_profile")],
+        [InlineKeyboardButton("📊 إحصائيات", callback_data="menu_stats")],
+    ]
+    return InlineKeyboardMarkup(keyboard)
 
 async def jobs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     jobs = get_pending_jobs(limit=15)
@@ -127,7 +134,6 @@ async def jobs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("لا يوجد وظائف جديدة دلوقتي. حاول تاني بعد قليل 🙏")
         return
     await send_jobs_digest(context, update.effective_chat.id, jobs, f"📋 آخر الوظائف المتاحة ({len(jobs)}):")
-
 
 async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
@@ -140,7 +146,6 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await send_jobs_digest(context, update.effective_chat.id, jobs, f'🔍 نتايج البحث عن "{keyword}":')
 
-
 async def saved_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     jobs = get_jobs_by_status("saved", limit=15)
     if not jobs:
@@ -151,7 +156,6 @@ async def saved_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             format_job_text(job), reply_markup=build_job_keyboard(job, show_actions=False)
         )
 
-
 async def ignored_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     jobs = get_jobs_by_status("ignored", limit=15)
     if not jobs:
@@ -161,7 +165,6 @@ async def ignored_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             format_job_text(job), reply_markup=build_job_keyboard(job, show_actions=False)
         )
-
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     s = get_stats()
@@ -179,11 +182,68 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"  {src}: {count}\n"
     await update.message.reply_text(text)
 
+# ---------- ملف التعريف الشخصي ----------
+async def setprofile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    profile = get_user_profile(user_id) or {}
+    # بناء رسالة تعليمات
+    text = (
+        "📝 **إعداد الملف الشخصي**\n"
+        "أرسل بياناتك بهذا التنسيق:\n"
+        "```\n"
+        "الاسم: أحمد محمد\n"
+        "سنوات الخبرة: 5\n"
+        "المهارات: محاسبة, ERP, تحليل مالي\n"
+        "المناطق المفضلة: القاهرة, الجيزة\n"
+        "الراتب المتوقع: 15000\n"
+        "```\n"
+        "أو استخدم الأزرار لتعديل كل حقل على حدة."
+    )
+    # أزرار لتعديل كل حقل
+    keyboard = [
+        [InlineKeyboardButton("✏️ تعديل الاسم", callback_data="edit_name")],
+        [InlineKeyboardButton("✏️ تعديل سنوات الخبرة", callback_data="edit_exp")],
+        [InlineKeyboardButton("✏️ تعديل المهارات", callback_data="edit_skills")],
+        [InlineKeyboardButton("✏️ تعديل المناطق", callback_data="edit_locations")],
+        [InlineKeyboardButton("✏️ تعديل الراتب", callback_data="edit_salary")],
+    ]
+    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
+async def recommend_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    profile = get_user_profile(user_id)
+    if not profile or not profile.get('cv_text'):
+        await update.message.reply_text("أولاً احفظ ملفك الشخصي باستخدام /setprofile وأرسل نص الـ CV الخاص بك (أو استخدم /setcv لرفع ملف PDF).")
+        return
+    jobs = get_pending_jobs(limit=20)
+    if not jobs:
+        await update.message.reply_text("لا توجد وظائف حالياً للتوصية.")
+        return
+    await update.message.reply_text("🔍 جاري تحليل الوظائف وتقييم التوافق...")
+    recommendations = []
+    for job in jobs:
+        # بناء وصف بسيط للوظيفة
+        desc = f"{job['title']} في {job['company']}، المطلوب: {job.get('experience', '')}"
+        result = analyze_job_fit(desc, profile['cv_text'])
+        recommendations.append((job, result))
+    # ترتيب حسب النسبة
+    recommendations.sort(key=lambda x: x[1]['score'], reverse=True)
+    # إرسال أفضل 5
+    count = 0
+    for job, result in recommendations[:5]:
+        text = f"📌 *{job['title']}* - {job['company']}\n"
+        text += f"التوافق: {result['score']}%\n"
+        text += f"{result['analysis'][:200]}...\n"
+        text += f"🔗 {job['url']}"
+        await update.message.reply_text(text, parse_mode="Markdown")
+        count += 1
+    if count == 0:
+        await update.message.reply_text("لم يتم العثور على توصيات مناسبة حالياً.")
+
+# ---------- إعدادات الـ CV ----------
 async def setcv_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["awaiting_cv"] = True
     await update.message.reply_text("تمام، ابعتلي ملف الـ CV بصيغة PDF دلوقتي 📎")
-
 
 async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.user_data.get("awaiting_cv"):
@@ -192,80 +252,97 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not doc or doc.mime_type != "application/pdf":
         await update.message.reply_text("محتاج ملف PDF بس 🙏 جرب تاني.")
         return
-    set_setting("cv_file_id", doc.file_id)
+    # حفظ file_id في settings (للاستخدام العام) وفي user_profiles (للمستخدم الحالي)
+    file_id = doc.file_id
+    set_setting("cv_file_id", file_id)
+    user_id = str(update.effective_user.id)
+    update_user_profile(user_id, {"cv_file_id": file_id})
+    # بالإضافة إلى ذلك، يمكن استخراج النص من PDF إذا أردت (سنفعل لاحقاً)
     context.user_data["awaiting_cv"] = False
-    await update.message.reply_text("✅ تم حفظ الـ CV، هبعته لك جنب كل رسالة تقديم.")
+    await update.message.reply_text("✅ تم حفظ الـ CV، هبعته لك جنب كل رسالة تقديم ويمكن استخدامه في التوصيات.")
 
-
-# ---------- الأزرار ----------
-
+# ---------- معالج الأزرار (الموسع) ----------
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    action, job_id = query.data.split(":", 1)
+    data = query.data
 
-    if action == "detail":
-        job = get_job_by_id(job_id)
-        if not job:
-            await query.message.reply_text("معلش، الوظيفة دي مش موجودة دلوقتي.")
-            return
-        await query.message.reply_text(
-            format_job_text(job), reply_markup=build_job_keyboard(job)
-        )
+    # أزرار القائمة الرئيسية
+    if data == "menu_jobs":
+        await jobs_command(update, context)
+        return
+    elif data == "menu_search":
+        await update.message.reply_text("استخدم الأمر /search كلمة للبحث.")
+        return
+    elif data == "menu_profile":
+        await setprofile_command(update, context)
+        return
+    elif data == "menu_stats":
+        await stats_command(update, context)
         return
 
-    if action == "letter":
-        job = get_job_by_id(job_id)
-        if not job:
-            await query.message.reply_text("معلش، مش لاقي تفاصيل الوظيفة دي.")
-            return
-        await query.message.reply_text(build_cover_letter(job))
+    # أزرار تعديل الملف الشخصي (سننفذها لاحقاً)
+    if data.startswith("edit_"):
+        field = data.split("_")[1]
+        await query.message.reply_text(f"أرسل القيمة الجديدة لـ {field}:")
+        context.user_data["editing_field"] = field
         return
 
-    if action in ("prep_wa", "prep_email"):
-        job = get_job_by_id(job_id)
-        if not job:
-            await query.message.reply_text("معلش، الوظيفة دي مش موجودة دلوقتي.")
-            return
-
-        cv_file_id = get_setting("cv_file_id")
-        if cv_file_id:
-            await context.bot.send_document(
-                chat_id=query.message.chat_id, document=cv_file_id, caption="📎 الـ CV بتاعك - جاهز ترفقه"
+    # الأزرار العادية (تفاصيل، حفظ، تجاهل، إلخ)
+    if ":" in data:
+        action, job_id = data.split(":", 1)
+        if action == "detail":
+            job = get_job_by_id(job_id)
+            if not job:
+                await query.message.reply_text("معلش، الوظيفة دي مش موجودة دلوقتي.")
+                return
+            await query.message.reply_text(
+                format_job_text(job), reply_markup=build_job_keyboard(job)
             )
-
-        if action == "prep_wa":
-            link = build_whatsapp_link(job)
-            label = "📩 فتح واتساب"
-        else:
-            link = build_mailto_link(job)
-            label = "📧 فتح الإيميل"
-
-        if not link:
-            await query.message.reply_text("معلش، الوظيفة دي مفيهاش وسيلة تواصل مباشرة.")
             return
-
-        await query.message.reply_text(
-            build_cover_letter(job),
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(label, url=link)]]),
-        )
-        return
-
-    if action == "save":
-        update_status(job_id, "saved")
-        await query.edit_message_reply_markup(reply_markup=None)
-        await query.message.reply_text("💾 تم الحفظ.")
-        return
-
-    if action == "ignore":
-        update_status(job_id, "ignored")
-        await query.edit_message_reply_markup(reply_markup=None)
-        await query.message.reply_text("🗑 تم التجاهل.")
-        return
-
+        elif action == "letter":
+            job = get_job_by_id(job_id)
+            if not job:
+                await query.message.reply_text("معلش، مش لاقي تفاصيل الوظيفة دي.")
+                return
+            await query.message.reply_text(build_cover_letter(job))
+            return
+        elif action in ("prep_wa", "prep_email"):
+            job = get_job_by_id(job_id)
+            if not job:
+                await query.message.reply_text("معلش، الوظيفة دي مش موجودة دلوقتي.")
+                return
+            cv_file_id = get_setting("cv_file_id")
+            if cv_file_id:
+                await context.bot.send_document(
+                    chat_id=query.message.chat_id, document=cv_file_id, caption="📎 الـ CV بتاعك - جاهز ترفقه"
+                )
+            if action == "prep_wa":
+                link = build_whatsapp_link(job)
+                label = "📩 فتح واتساب"
+            else:
+                link = build_mailto_link(job)
+                label = "📧 فتح الإيميل"
+            if not link:
+                await query.message.reply_text("معلش، الوظيفة دي مفيهاش وسيلة تواصل مباشرة.")
+                return
+            await query.message.reply_text(
+                build_cover_letter(job),
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(label, url=link)]]),
+            )
+            return
+        elif action == "save":
+            update_status(job_id, "saved")
+            await query.edit_message_reply_markup(reply_markup=None)
+            await query.message.reply_text("💾 تم الحفظ.")
+            return
+        elif action == "ignore":
+            update_status(job_id, "ignored")
+            await query.edit_message_reply_markup(reply_markup=None)
+            await query.message.reply_text("🗑 تم التجاهل.")
+            return
 
 # ---------- الإشعار الدوري ----------
-
 async def push_new_jobs(context: ContextTypes.DEFAULT_TYPE):
     if not TELEGRAM_CHAT_ID:
         logger.warning("TELEGRAM_CHAT_ID لسه مش متحدد - مش هقدر أبعت تلقائيًا")
@@ -280,15 +357,11 @@ async def push_new_jobs(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"فشل إرسال تنبيه الوظائف الجديدة: {e}")
 
-
-# ---------- معالج الأخطاء العام ----------
-
+# ---------- معالج الأخطاء ----------
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"⚠️ حصل خطأ: {context.error}")
 
-
 # ---------- التشغيل ----------
-
 def main():
     if not BOT_TOKEN:
         raise RuntimeError("لازم تحدد BOT_TOKEN في متغيرات البيئة")
@@ -301,6 +374,8 @@ def main():
     app.add_handler(CommandHandler("ignored", ignored_command))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("setcv", setcv_command))
+    app.add_handler(CommandHandler("setprofile", setprofile_command))
+    app.add_handler(CommandHandler("recommend", recommend_command))
     app.add_handler(MessageHandler(filters.Document.ALL, document_handler))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_error_handler(error_handler)
@@ -309,7 +384,6 @@ def main():
 
     logger.info("البوت شغال...")
     app.run_polling()
-
 
 if __name__ == "__main__":
     main()
