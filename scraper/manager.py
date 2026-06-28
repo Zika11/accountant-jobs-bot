@@ -50,7 +50,7 @@ def collect_all_jobs(search_term="محاسب", max_pages=3):
     all_jobs = []
     failed_providers = []
     
-    print(f"🔄 بدء الجمع من {len(providers)} مصدر...")
+    print(f"🔄 بدء جمع الوظائف من {len(providers)} مصدر...")
     
     with ThreadPoolExecutor(max_workers=len(providers)) as executor:
         futures = {
@@ -61,7 +61,7 @@ def collect_all_jobs(search_term="محاسب", max_pages=3):
         for future in as_completed(futures):
             source = futures[future]
             try:
-                jobs = future.result(timeout=180)  # زودنا المهلة لـ 3 دقائق
+                jobs = future.result(timeout=120)
                 all_jobs.extend(jobs)
                 print(f"✅ {source}: {len(jobs)} وظيفة")
             except Exception as e:
@@ -101,7 +101,7 @@ def main():
     load_dotenv()
 
     search_term = os.environ.get("SEARCH_TERM", "محاسب")
-    max_pages = int(os.environ.get("MAX_PAGES", 2))  # قللنا الصفحات عشان السرعة
+    max_pages = int(os.environ.get("MAX_PAGES", 2))  # خليها 2 عشان السرعة
     
     print(f"🔄 بدء جمع الوظائف: {search_term}")
     start_time = time.time()
