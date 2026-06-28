@@ -3,6 +3,7 @@
 بوت تليجرام لمتابعة وظائف المحاسبة (متعدد المصادر)
 """
 
+import asyncio
 import logging
 import os
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -353,16 +354,16 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 
 # ---------- التشغيل ----------
 
-def main():
+async def main():
+    """الدالة الرئيسية لتشغيل البوت"""
     if not BOT_TOKEN:
         raise RuntimeError("لازم تحدد BOT_TOKEN في متغيرات البيئة")
 
     app = Application.builder().token(BOT_TOKEN).build()
-
-    # ✅ إزالة أي Webhook قديم قبل بدء الـ Polling (بيحل مشكلة Conflict)
-    import asyncio
-    asyncio.run(app.bot.delete_webhook())
-
+    
+    # حذف الـ webhook القديم
+    await app.bot.delete_webhook()
+    
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("jobs", jobs_command))
     app.add_handler(CommandHandler("search", search_command))
@@ -379,8 +380,24 @@ def main():
     app.job_queue.run_repeating(push_new_jobs, interval=NOTIFY_INTERVAL_SECONDS, first=15)
 
     logger.info("البوت شغال...")
-    app.run_polling()
+    
+    # بدء polling باستخدام asyncio
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+    
+    # انتظر حتى يتم إيقاف البوت
+    try:
+        while True:
+            await asyncio.sleep(3600)
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("تم إيقاف البوت")
+    finally:
+        await app.updater.stop()
+        await app.stop()
+        await app.shutdown()
 
 
 if __name__ == "__main__":
-    main()
+    # تشغيل الدالة الرئيسية باستخدام asyncio.run()
+    asyncio.run(main())
