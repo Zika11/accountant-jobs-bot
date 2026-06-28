@@ -1,3 +1,4 @@
+# scraper/providers/base.py
 from abc import ABC, abstractmethod
 from typing import List, Dict, Optional
 
@@ -20,17 +21,16 @@ class JobProvider(ABC):
             'location': str,
             'posted': str,
             'url': str,
-            'experience': str,          # نص الخبرة (مثل '1-3 Yrs')
-            'min_experience': int,      # القيمة الرقمية للفلترة (أو None)
+            'experience': str,
+            'min_experience': int,
             'contact_email': Optional[str],
             'contact_phone': Optional[str],
-            'source': str               # سيتم تعبئته تلقائياً من source_name
+            'source': str
         }
         """
         pass
 
     def _normalize_job(self, job: Dict) -> Dict:
-        """تطبيع الحقول للتأكد من وجود كل المفاتيح"""
         defaults = {
             'title': '',
             'company': '',
