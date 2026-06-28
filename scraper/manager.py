@@ -34,7 +34,6 @@ def collect_all_jobs(search_term="محاسب", max_pages=3):
             except Exception as e:
                 print(f"⚠️ فشل أحد المزودات: {e}")
 
-    # إزالة التكرار حسب الرابط
     seen = set()
     unique = []
     for job in all_jobs:
@@ -63,7 +62,6 @@ def main():
             print(f"🧹 تم إغلاق {expired} وظيفة قديمة")
     except Exception as e:
         print(f"⚠️ فشل الحفظ في Supabase: {e}")
-        # حفظ في CSV كخطة بديلة
         import csv
         with open("all_jobs.csv", "w", newline="", encoding="utf-8-sig") as f:
             if jobs:
@@ -72,15 +70,15 @@ def main():
                 writer.writerows(jobs)
         print("💾 تم حفظ الوظائف في all_jobs.csv محلياً")
 
-    # إرسال إشعار تليجرام (اختياري)
     bot_token = os.environ.get("BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
     if bot_token and chat_id and os.environ.get("NOTIFY_ON_SUCCESS", "true").lower() == "true":
         import requests
         contacts_found = sum(1 for j in jobs if j.get("contact_email") or j.get("contact_phone"))
+        sources = set(j.get('source', 'unknown') for j in jobs)
         text = (
-            f"✅ تم جمع {len(jobs)} وظيفة محاسبة اليوم ({contacts_found} منهم فيها وسيلة تواصل مباشرة).\n"
-            f"المصادر: {', '.join(set(j.get('source', 'unknown') for j in jobs))}"
+            f"✅ تم جمع {len(jobs)} وظيفة محاسبة اليوم ({contacts_found} منها فيها وسيلة تواصل مباشرة).\n"
+            f"المصادر: {', '.join(sources)}"
         )
         try:
             requests.post(
