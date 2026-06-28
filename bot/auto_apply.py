@@ -7,63 +7,67 @@ import os
 import re
 import logging
 from urllib.parse import quote
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from message_templates import build_cover_letter
 
 logger = logging.getLogger(__name__)
 
-# جلب رقم واتساب من متغيرات البيئة
+# ==================== إعدادات ====================
+
 WHATSAPP_NUMBER = os.environ.get("WHATSAPP_NUMBER", "")
 
+# ==================== الدوال الرئيسية ====================
 
 async def auto_apply_whatsapp(job: dict, bot, chat_id: int) -> dict:
     """
-    يقوم بالتقديم على الوظيفة عبر واتساب:
-    - يبعت رابط واتساب جاهز بالرسالة
-    - يبعت الـ CV (لو موجود)
-    - يسجل التقديم في قاعدة البيانات
+    التقديم على وظيفة عبر واتساب
+
+    Args:
+        job: بيانات الوظيفة (dict)
+        bot: كائن البوت
+        chat_id: معرف المحادثة
+
+    Returns:
+        dict: {"success": bool, "error": str, "link": str}
     """
     try:
+        # 1. التحقق من وجود رقم
         phone = job.get("contact_phone")
         if not phone:
             return {"success": False, "error": "مفيش رقم واتساب في الوظيفة"}
 
-        # تنظيف الرقم
-        clean_phone = re.sub(r"\D", "", phone)
-        if clean_phone.startswith("0"):
-            clean_phone = "2" + clean_phone[1:]
-        elif clean_phone.startswith("20"):
-            clean_phone = clean_phone
-        else:
-            # لو الرقم مصري وبدأ بـ 010 مثلاً
-            if len(clean_phone) == 11 and clean_phone.startswith("010"):
-                clean_phone = "20" + clean_phone[1:]
-            elif len(clean_phone) == 11 and clean_phone.startswith("011"):
-                clean_phone = "20" + clean_phone[1:]
+        # 2. تنظيف الرقم
+        clean_phone = clean_phone_number(phone)
+        if not clean_phone:
+            return {"success": False, "error": "رقم غير صالح"}
 
-        # بناء رسالة التقديم
-        from message_templates import build_cover_letter
+        # 3. بناء الرسالة
         message = build_cover_letter(job)
+        if not message:
+            return {"success": False, "error": "مفيش رسالة جاهزة"}
+
+        # 4. بناء الرابط
         encoded_msg = quote(message)
         wa_link = f"https://wa.me/{clean_phone}?text={encoded_msg}"
 
-        # إرسال رابط واتساب للمستخدم
+        # 5. إرسال رابط واتساب للمستخدم
         await bot.send_message(
             chat_id=chat_id,
-            text=f"🚀 جاهز للتقديم على **{job['title']}** في {job.get('company', '')}\n\n"
-                 f"📱 اضغط على الزر لفتح واتساب وإرسال الرسالة:",
+            text=(
+                f"🚀 <b>جاهز للتقديم على:</b>\n"
+                f"📌 {job['title']}\n"
+                f"🏢 {job.get('company', 'غير محدد')}\n\n"
+                f"📱 اضغط على الزر لفتح واتساب وإرسال الرسالة:"
+            ),
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("📱 افتح واتساب", url=wa_link)
+                InlineKeyboardButton("📱 فتح واتساب", url=wa_link)
             ]]),
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
 
-        # إرسال الـ CV لو موجود
-        cv_file_id = os.environ.get("CV_FILE_ID")
-        if not cv_file_id:
-            # جلب من قاعدة البيانات
-            from db import get_setting
-            cv_file_id = get_setting("cv_file_id")
-
+        # 6. إرسال الـ CV لو موجود
+        cv_file_id = get_cv_file_id()
         if cv_file_id:
             await bot.send_document(
                 chat_id=chat_id,
@@ -71,7 +75,7 @@ async def auto_apply_whatsapp(job: dict, bot, chat_id: int) -> dict:
                 caption=f"📎 الـ CV الخاص بك - للتقديم على {job['title']}"
             )
 
-        # تسجيل التقديم في قاعدة البيانات (تحديث الحالة)
+        # 7. تسجيل التقديم
         from db import update_status
         update_status(job["id"], "applied")
         logger.info(f"✅ تم التقديم على {job['title']} عبر واتساب: {clean_phone}")
@@ -81,3 +85,43 @@ async def auto_apply_whatsapp(job: dict, bot, chat_id: int) -> dict:
     except Exception as e:
         logger.error(f"❌ فشل التقديم التلقائي: {e}")
         return {"success": False, "error": str(e)}
+
+
+# ==================== دوال مساعدة ====================
+
+def clean_phone_number(phone: str) -> str:
+    """
+    تنظيف رقم الهاتف للتنسيق الدولي
+    """
+    if not phone:
+        return ""
+
+    # إزالة كل ما ليس رقم
+    clean = re.sub(r"\D", "", phone)
+
+    # التأكد من أن الرقم 11 رقم (رقم مصري)
+    if len(clean) == 11 and clean.startswith("0"):
+        # 01012345678 → 201012345678
+        return "2" + clean[1:]
+
+    if len(clean) == 12 and clean.startswith("20"):
+        # 201012345678 → 201012345678
+        return clean
+
+    if len(clean) == 10:
+        # 1012345678 → 201012345678
+        return "20" + clean
+
+    return clean
+
+
+def get_cv_file_id() -> str:
+    """
+    جلب معرف ملف الـ CV من الإعدادات
+    """
+    try:
+        from db import get_setting
+        return get_setting("cv_file_id") or os.environ.get("CV_FILE_ID", "")
+    except Exception as e:
+        logger.error(f"❌ فشل جلب CV: {e}")
+        return os.environ.get("CV_FILE_ID", "")
