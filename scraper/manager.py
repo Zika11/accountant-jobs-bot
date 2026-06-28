@@ -9,6 +9,13 @@ from providers.wuzzuf import WuzzufProvider
 from providers.forasna import ForasnaProvider
 from providers.bayt import BaytProvider
 from providers.indeed import IndeedProvider
+from providers.egypt_providers import (
+    JobzellaProvider,
+    EgyptianJobsProvider,
+    CareerEgyptProvider,
+    TelegramProvider,
+    FacebookProvider,
+)
 
 # إضافة مسار البوت للاستيراد
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "bot"))
@@ -20,10 +27,20 @@ def get_all_providers():
     max_exp = int(max_exp) if max_exp and max_exp.isdigit() else None
 
     providers = [
+        # الموجودة
         WuzzufProvider(location_filter=location_filter, max_experience_years=max_exp),
         ForasnaProvider(max_experience_years=max_exp),
         BaytProvider(max_experience_years=max_exp),
         IndeedProvider(max_experience_years=max_exp),
+        
+        # الجديدة (مصرية)
+        JobzellaProvider(max_experience_years=max_exp),
+        EgyptianJobsProvider(max_experience_years=max_exp),
+        CareerEgyptProvider(max_experience_years=max_exp),
+        
+        # تليجرام وفيسبوك
+        TelegramProvider(),
+        FacebookProvider(),
     ]
     return providers
 
@@ -32,6 +49,8 @@ def collect_all_jobs(search_term="محاسب", max_pages=3):
     providers = get_all_providers()
     all_jobs = []
     failed_providers = []
+    
+    print(f"🔄 بدء الجمع من {len(providers)} مصدر...")
     
     with ThreadPoolExecutor(max_workers=len(providers)) as executor:
         futures = {
@@ -42,7 +61,7 @@ def collect_all_jobs(search_term="محاسب", max_pages=3):
         for future in as_completed(futures):
             source = futures[future]
             try:
-                jobs = future.result(timeout=120)
+                jobs = future.result(timeout=180)  # زودنا المهلة لـ 3 دقائق
                 all_jobs.extend(jobs)
                 print(f"✅ {source}: {len(jobs)} وظيفة")
             except Exception as e:
@@ -82,7 +101,7 @@ def main():
     load_dotenv()
 
     search_term = os.environ.get("SEARCH_TERM", "محاسب")
-    max_pages = int(os.environ.get("MAX_PAGES", 3))
+    max_pages = int(os.environ.get("MAX_PAGES", 2))  # قللنا الصفحات عشان السرعة
     
     print(f"🔄 بدء جمع الوظائف: {search_term}")
     start_time = time.time()
