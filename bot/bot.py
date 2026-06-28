@@ -28,7 +28,6 @@ from db import (
     update_status,
     upsert_user_profile,
     get_user_profile,
-    get_allowed_users,
 )
 from message_templates import build_cover_letter, build_whatsapp_link, build_mailto_link
 from auto_apply import auto_apply_whatsapp
@@ -83,7 +82,6 @@ def build_job_keyboard(job: dict, show_actions: bool = True) -> InlineKeyboardMa
     if contact_row:
         buttons.append(contact_row)
     
-    # زر التقديم التلقائي
     if AUTO_APPLY_ENABLED and job.get("contact_phone"):
         buttons.append([InlineKeyboardButton("🚀 تقديم تلقائي", callback_data=f"auto_apply:{job['id']}")])
     
@@ -120,14 +118,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
     
-    # التحقق من الصلاحية
     if not is_allowed_user(user_id):
         await update.message.reply_text("⛔ هذا البوت للاستخدام الشخصي فقط.")
         return
     
     logger.info(f"📩 استلمت /start من: {chat_id} (user_id: {user_id})")
     
-    # تسجيل المستخدم
     upsert_user_profile(str(user_id), {
         "name": update.effective_user.full_name or "أحمد",
         "chat_id": str(chat_id),
@@ -264,7 +260,6 @@ async def auto_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not is_allowed_user(user_id):
         return
-    # تحديث الإعداد في قاعدة البيانات
     upsert_user_profile(str(user_id), {"auto_apply": True})
     await update.message.reply_text("✅ تم تشغيل التقديم التلقائي")
 
@@ -309,7 +304,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text("مفيش رقم واتساب للتقديم.")
             return
         
-        # تنفيذ التقديم التلقائي
         result = await auto_apply_whatsapp(job, context.bot, query.message.chat_id)
         
         if result["success"]:
@@ -391,7 +385,6 @@ async def push_new_jobs(context: ContextTypes.DEFAULT_TYPE):
         if not jobs:
             continue
         
-        # التقديم التلقائي
         if auto_apply_enabled:
             for job in jobs:
                 if job.get("contact_phone") and not job.get("auto_applied"):
@@ -406,7 +399,6 @@ async def push_new_jobs(context: ContextTypes.DEFAULT_TYPE):
                     else:
                         logger.error(f"فشل التقديم على {job['title']}: {result['error']}")
         
-        # إرسال الدايجست
         await send_jobs_digest(context, chat_id, jobs, f"🆕 وظائف جديدة ({len(jobs)}):")
         for job in jobs:
             if not job.get("auto_applied"):
@@ -425,13 +417,13 @@ async def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN مطلوب")
     
-    # التأكد من وجود المستخدم المسموح
     if not ALLOWED_USER_IDS or not ALLOWED_USER_IDS[0]:
         logger.warning("⚠️ ALLOWED_USER_IDS غير محدد - البوت مش هيشتغل لأي حد")
         return
 
     app = Application.builder().token(BOT_TOKEN).build()
     
+    # حذف أي Webhook قديم
     await app.bot.delete_webhook()
     
     app.add_handler(CommandHandler("start", start))
@@ -454,8 +446,8 @@ async def main():
     await app.initialize()
     await app.start()
     await app.updater.start_polling(
-        drop_pending_updates=True,
-        allowed_updates=None,
+        drop_pending_updates=True,  # 🔥 يحل مشكلة Conflict
+        allowed_updates=[],
         bootstrap_retries=-1,
     )
     
