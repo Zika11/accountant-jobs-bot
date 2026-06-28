@@ -106,6 +106,7 @@ async def send_jobs_digest(context: ContextTypes.DEFAULT_TYPE, chat_id, jobs: li
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
+    logger.info(f"📩 استلمت /start من: {chat_id}")
     await update.message.reply_text(
         "أهلاً! 👋\n"
         "البوت ده هيبعتلك وظائف محاسبة جديدة بشكل دوري.\n\n"
