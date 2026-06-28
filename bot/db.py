@@ -6,7 +6,7 @@
 
 import os
 from supabase import create_client, Client
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
@@ -135,7 +135,7 @@ def set_setting(key: str, value: str):
 
 
 # ===========================
-# دوال الملفات الشخصية (user_profiles) - كاملة
+# دوال الملفات الشخصية (user_profiles)
 # ===========================
 
 def create_user_profile(
@@ -190,13 +190,7 @@ def update_user_profile(user_id: str, updates: dict) -> Optional[dict]:
 
 
 def upsert_user_profile(user_id: str, data: dict) -> dict:
-    """
-    تحديث أو إدراج ملف المستخدم.
-    data: dict يحتوي على الحقول المراد تحديثها (مثل name, skills, ...)
-    يقوم بالبحث عن المستخدم، إذا وجد يحدث، وإلا ينشئ جديداً.
-    يرجع الملف الشخصي النهائي.
-    """
-    # نستخرج القيم من data مع قيم افتراضية
+    """تحديث أو إدراج ملف المستخدم."""
     name = data.get("name", "")
     experience_years = data.get("experience_years", 0)
     skills = data.get("skills", [])
@@ -207,7 +201,6 @@ def upsert_user_profile(user_id: str, data: dict) -> dict:
 
     existing = get_user_profile(user_id)
     if existing:
-        # تحديث
         updates = {}
         if name:
             updates["name"] = name
@@ -225,7 +218,6 @@ def upsert_user_profile(user_id: str, data: dict) -> dict:
             updates["cv_file_id"] = cv_file_id
         return update_user_profile(user_id, updates) or existing
     else:
-        # إنشاء جديد
         return create_user_profile(
             user_id=user_id,
             name=name,
