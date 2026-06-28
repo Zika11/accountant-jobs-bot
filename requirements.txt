@@ -1,5 +1,9 @@
-requests
-beautifulsoup4
+# المكتبات الأساسية
+requests>=2.31.0
+beautifulsoup4>=4.12.0
 supabase==2.7.4
 python-telegram-bot[job-queue]==21.6
-python-dotenv
+python-dotenv>=1.0.0
+
+# اختياري لكن مُوصى به بشدة لإعادة المحاولات التلقائية عند فشل الشبكة
+tenacity>=8.2.0
