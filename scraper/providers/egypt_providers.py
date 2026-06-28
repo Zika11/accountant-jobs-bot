@@ -1,11 +1,11 @@
 # scraper/providers/egypt_providers.py
 """
-كل المزودات المصرية في ملف واحد:
+المزودات المصرية:
 - Jobzella (HTML)
 - EgyptianJobs (HTML)
 - CareerEgypt (HTML)
 - Telegram (API)
-- Facebook (RSS/API)
+- Facebook (Graph API)
 """
 
 import os
@@ -272,7 +272,7 @@ class CareerEgyptProvider(JobProvider):
 
 
 # ============================================
-# 4. تليجرام (API)
+# 4. تليجرام (باستخدام @username أو chat_id)
 # ============================================
 class TelegramProvider(JobProvider):
     source_name = "telegram"
@@ -293,9 +293,15 @@ class TelegramProvider(JobProvider):
             if not channel:
                 continue
             try:
+                params = {"limit": 10}
+                if channel.startswith("-100") or channel.isdigit():
+                    params["chat_id"] = channel
+                else:
+                    params["chat_id"] = f"@{channel}"
+
                 response = requests.get(
                     f"{self.base_url}/getUpdates",
-                    params={"chat_id": f"@{channel}", "limit": 50},
+                    params=params,
                     timeout=30
                 )
                 data = response.json()
@@ -315,13 +321,10 @@ class TelegramProvider(JobProvider):
     def _parse_message(self, text: str, channel: str) -> dict:
         title_match = re.search(r"(?:وظيفة|مطلوب)\s*(.+?)(?:\n|$)", text, re.I)
         title = title_match.group(1).strip() if title_match else "وظيفة جديدة"
-        
         company_match = re.search(r"(?:شركة|جهة)\s*[::]\s*(.+?)(?:\n|$)", text, re.I)
         company = company_match.group(1).strip() if company_match else ""
-        
         location_match = re.search(r"(?:مكان|عنوان|منطقة)\s*[::]\s*(.+?)(?:\n|$)", text, re.I)
         location = location_match.group(1).strip() if location_match else ""
-        
         phone_match = re.search(r'(?:\+?20|0)\s*1[0-9](?:[\s\-]?[0-9]){8}', text)
         phone = None
         if phone_match:
@@ -329,13 +332,10 @@ class TelegramProvider(JobProvider):
             if digits.startswith("20"):
                 digits = "0" + digits[2:]
             phone = digits
-        
         email_match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text)
         email = email_match.group(0) if email_match else None
-        
         link_match = re.search(r'(https?://[^\s]+)', text)
         url = link_match.group(0) if link_match else f"https://t.me/{channel}"
-        
         return {
             "title": title,
             "company": company,
@@ -350,7 +350,7 @@ class TelegramProvider(JobProvider):
 
 
 # ============================================
-# 5. فيسبوك (API) - معدل لاستخدام 50 جروب
+# 5. فيسبوك (باستخدام Graph API)
 # ============================================
 class FacebookProvider(JobProvider):
     source_name = "facebook"
@@ -366,9 +366,8 @@ class FacebookProvider(JobProvider):
             print("⚠️ فيسبوك: مفيش توكن أو جروبات محددة")
             return jobs
 
-        # خد أول 10 جروبات بس لكل تشغيلة (عشان السرعة)
-        active_groups = self.groups[:10]  # 🔥 غير الرقم حسب احتياجك
-        print(f"📱 فيسبوك: هجيب من {len(active_groups)} جروب")
+        # نأخذ أول 10 جروبات فقط لتجنب بطء الأداء
+        active_groups = self.groups[:10] if len(self.groups) > 10 else self.groups
 
         for group in active_groups:
             group = group.strip()
@@ -384,7 +383,7 @@ class FacebookProvider(JobProvider):
                 response = requests.get(url, params=params, timeout=30)
                 data = response.json()
                 if "error" in data:
-                    print(f"⚠️ فيسبوك جروب {group}: {data['error'].get('message', 'خطأ')}")
+                    print(f"⚠️ فيسبوك خطأ في جروب {group}: {data['error'].get('message')}")
                     continue
                 for post in data.get("data", []):
                     text = post.get("message", "")
@@ -396,19 +395,16 @@ class FacebookProvider(JobProvider):
                             jobs.append(self._normalize_job(job))
             except Exception as e:
                 print(f"⚠️ فيسبوك ({group}) فشل: {e}")
-            time.sleep(1)
+            time.sleep(1.5)
         return jobs
 
     def _parse_post(self, text: str, post: dict) -> dict:
         title_match = re.search(r"(?:وظيفة|مطلوب)\s*(.+?)(?:\n|$)", text, re.I)
         title = title_match.group(1).strip() if title_match else "وظيفة جديدة"
-        
         company_match = re.search(r"(?:شركة|جهة)\s*[::]\s*(.+?)(?:\n|$)", text, re.I)
         company = company_match.group(1).strip() if company_match else ""
-        
         location_match = re.search(r"(?:مكان|عنوان|منطقة)\s*[::]\s*(.+?)(?:\n|$)", text, re.I)
         location = location_match.group(1).strip() if location_match else ""
-        
         phone_match = re.search(r'(?:\+?20|0)\s*1[0-9](?:[\s\-]?[0-9]){8}', text)
         phone = None
         if phone_match:
@@ -416,10 +412,8 @@ class FacebookProvider(JobProvider):
             if digits.startswith("20"):
                 digits = "0" + digits[2:]
             phone = digits
-        
         email_match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text)
         email = email_match.group(0) if email_match else None
-        
         return {
             "title": title,
             "company": company,
