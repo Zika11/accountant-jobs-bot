@@ -1,11 +1,12 @@
 # bot/db.py
 """
-اتصال بسيط بقاعدة بيانات Supabase
-بيستخدمه الـ scraper (للحفظ) والبوت (للقراءة والتحديث)
+اتصال بقاعدة بيانات Supabase
+يدعم: jobs, settings, user_profiles
 """
 
 import os
 from supabase import create_client, Client
+from typing import Optional, Dict, List, Any
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
@@ -13,19 +14,15 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
 def get_client() -> Client:
     if not SUPABASE_URL or not SUPABASE_KEY:
-        raise RuntimeError(
-            "لازم تحدد SUPABASE_URL و SUPABASE_KEY في الـ environment variables أو ملف .env"
-        )
+        raise RuntimeError("لازم تحدد SUPABASE_URL و SUPABASE_KEY في environment variables")
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
-# ========== دوال الوظائف (jobs) ==========
+# ===========================
+# دوال الوظائف (jobs)
+# ===========================
 
 def insert_jobs(jobs: list[dict]) -> int:
-    """
-    يضيف وظائف جديدة، ويتجاهل أي وظيفة موجودة بالفعل (نفس الرابط).
-    يتوقع أن كل وظيفة تحتوي على مفتاح 'source' (إن لم يكن، يضع 'unknown').
-    """
     if not jobs:
         return 0
     for job in jobs:
@@ -38,27 +35,23 @@ def insert_jobs(jobs: list[dict]) -> int:
 
 def get_unnotified_jobs(limit: int = 20) -> list[dict]:
     client = get_client()
-    result = (
-        client.table("jobs")
-        .select("*")
-        .eq("notified", False)
-        .order("created_at", desc=True)
-        .limit(limit)
-        .execute()
-    )
+    result = (client.table("jobs")
+              .select("*")
+              .eq("notified", False)
+              .order("created_at", desc=True)
+              .limit(limit)
+              .execute())
     return result.data or []
 
 
 def get_jobs_by_status(status: str, limit: int = 20) -> list[dict]:
     client = get_client()
-    result = (
-        client.table("jobs")
-        .select("*")
-        .eq("status", status)
-        .order("created_at", desc=True)
-        .limit(limit)
-        .execute()
-    )
+    result = (client.table("jobs")
+              .select("*")
+              .eq("status", status)
+              .order("created_at", desc=True)
+              .limit(limit)
+              .execute())
     return result.data or []
 
 
@@ -76,25 +69,22 @@ def update_status(job_id: str, status: str):
     client.table("jobs").update({"status": status}).eq("id", job_id).execute()
 
 
-def get_job_by_id(job_id: str) -> dict | None:
+def get_job_by_id(job_id: str) -> Optional[dict]:
     client = get_client()
     result = client.table("jobs").select("*").eq("id", job_id).limit(1).execute()
     return result.data[0] if result.data else None
 
 
 def search_jobs(keyword: str, limit: int = 15) -> list[dict]:
-    """بحث بكلمة في العنوان أو الشركة أو المكان أو المصدر"""
     client = get_client()
     keyword = keyword.replace(",", " ").replace("%", " ").strip()
     pattern = f"%{keyword}%"
-    result = (
-        client.table("jobs")
-        .select("*")
-        .or_(f"title.ilike.{pattern},company.ilike.{pattern},location.ilike.{pattern},source.ilike.{pattern}")
-        .order("created_at", desc=True)
-        .limit(limit)
-        .execute()
-    )
+    result = (client.table("jobs")
+              .select("*")
+              .or_(f"title.ilike.{pattern},company.ilike.{pattern},location.ilike.{pattern},source.ilike.{pattern}")
+              .order("created_at", desc=True)
+              .limit(limit)
+              .execute())
     return result.data or []
 
 
@@ -106,7 +96,6 @@ def get_stats() -> dict:
     for r in rows:
         src = r.get('source', 'unknown')
         source_counts[src] = source_counts.get(src, 0) + 1
-
     return {
         "total": len(rows),
         "pending": sum(1 for r in rows if r.get("status") == "pending"),
@@ -119,24 +108,22 @@ def get_stats() -> dict:
 
 
 def expire_old_jobs(days: int = 14) -> int:
-    """يحوّل أي وظيفة لسه pending وعدى عليها أكتر من X يوم لحالة expired"""
     from datetime import datetime, timedelta, timezone
-
     client = get_client()
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    result = (
-        client.table("jobs")
-        .update({"status": "expired"})
-        .eq("status", "pending")
-        .lt("created_at", cutoff)
-        .execute()
-    )
+    result = (client.table("jobs")
+              .update({"status": "expired"})
+              .eq("status", "pending")
+              .lt("created_at", cutoff)
+              .execute())
     return len(result.data) if result.data else 0
 
 
-# ========== دوال الإعدادات (settings) ==========
+# ===========================
+# دوال الإعدادات (settings)
+# ===========================
 
-def get_setting(key: str) -> str | None:
+def get_setting(key: str) -> Optional[str]:
     client = get_client()
     result = client.table("settings").select("value").eq("key", key).limit(1).execute()
     return result.data[0]["value"] if result.data else None
@@ -147,15 +134,16 @@ def set_setting(key: str, value: str):
     client.table("settings").upsert({"key": key, "value": value}, on_conflict="key").execute()
 
 
-# ========== دوال الملفات الشخصية (user_profiles) ==========
-# (يمكنك استيرادها مباشرة من user_profiles.py، لكننا نضيفها هنا للتوحيد)
+# ===========================
+# دوال الملفات الشخصية (user_profiles) - كاملة
+# ===========================
 
 def create_user_profile(
     user_id: str,
     name: str = "",
     experience_years: int = 0,
-    skills: list = None,
-    preferred_locations: list = None,
+    skills: List[str] = None,
+    preferred_locations: List[str] = None,
     expected_salary: int = None,
     cv_text: str = "",
     cv_file_id: str = None,
@@ -164,7 +152,6 @@ def create_user_profile(
         skills = []
     if preferred_locations is None:
         preferred_locations = []
-
     client = get_client()
     data = {
         "user_id": user_id,
@@ -180,30 +167,75 @@ def create_user_profile(
     return result.data[0] if result.data else {}
 
 
-def get_user_profile(user_id: str) -> dict | None:
+def get_user_profile(user_id: str) -> Optional[dict]:
     client = get_client()
-    result = (
-        client.table("user_profiles")
-        .select("*")
-        .eq("user_id", user_id)
-        .limit(1)
-        .execute()
-    )
+    result = (client.table("user_profiles")
+              .select("*")
+              .eq("user_id", user_id)
+              .limit(1)
+              .execute())
     return result.data[0] if result.data else None
 
 
-def update_user_profile(user_id: str, updates: dict) -> dict | None:
+def update_user_profile(user_id: str, updates: dict) -> Optional[dict]:
     client = get_client()
     clean_updates = {k: v for k, v in updates.items() if v is not None}
     if not clean_updates:
         return get_user_profile(user_id)
-    result = (
-        client.table("user_profiles")
-        .update(clean_updates)
-        .eq("user_id", user_id)
-        .execute()
-    )
+    result = (client.table("user_profiles")
+              .update(clean_updates)
+              .eq("user_id", user_id)
+              .execute())
     return result.data[0] if result.data else None
+
+
+def upsert_user_profile(user_id: str, data: dict) -> dict:
+    """
+    تحديث أو إدراج ملف المستخدم.
+    data: dict يحتوي على الحقول المراد تحديثها (مثل name, skills, ...)
+    يقوم بالبحث عن المستخدم، إذا وجد يحدث، وإلا ينشئ جديداً.
+    يرجع الملف الشخصي النهائي.
+    """
+    # نستخرج القيم من data مع قيم افتراضية
+    name = data.get("name", "")
+    experience_years = data.get("experience_years", 0)
+    skills = data.get("skills", [])
+    preferred_locations = data.get("preferred_locations", [])
+    expected_salary = data.get("expected_salary")
+    cv_text = data.get("cv_text", "")
+    cv_file_id = data.get("cv_file_id")
+
+    existing = get_user_profile(user_id)
+    if existing:
+        # تحديث
+        updates = {}
+        if name:
+            updates["name"] = name
+        if experience_years:
+            updates["experience_years"] = experience_years
+        if skills:
+            updates["skills"] = skills
+        if preferred_locations:
+            updates["preferred_locations"] = preferred_locations
+        if expected_salary is not None:
+            updates["expected_salary"] = expected_salary
+        if cv_text:
+            updates["cv_text"] = cv_text
+        if cv_file_id:
+            updates["cv_file_id"] = cv_file_id
+        return update_user_profile(user_id, updates) or existing
+    else:
+        # إنشاء جديد
+        return create_user_profile(
+            user_id=user_id,
+            name=name,
+            experience_years=experience_years,
+            skills=skills,
+            preferred_locations=preferred_locations,
+            expected_salary=expected_salary,
+            cv_text=cv_text,
+            cv_file_id=cv_file_id,
+        )
 
 
 def delete_user_profile(user_id: str) -> bool:
