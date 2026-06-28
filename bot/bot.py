@@ -6,6 +6,7 @@
 import asyncio
 import logging
 import os
+import time
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
@@ -113,7 +114,6 @@ async def send_jobs_digest(context: ContextTypes.DEFAULT_TYPE, chat_id, jobs: li
 
 
 # ---------- الأوامر ----------
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
@@ -273,7 +273,6 @@ async def auto_off_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ---------- الأزرار ----------
-
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not is_allowed_user(user_id):
@@ -365,7 +364,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ---------- الإشعار الدوري مع التقديم التلقائي ----------
-
 async def push_new_jobs(context: ContextTypes.DEFAULT_TYPE):
     if not ALLOWED_USER_IDS:
         return
@@ -406,13 +404,11 @@ async def push_new_jobs(context: ContextTypes.DEFAULT_TYPE):
 
 
 # ---------- معالج الأخطاء ----------
-
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"⚠️ خطأ: {context.error}")
 
 
 # ---------- التشغيل ----------
-
 async def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN مطلوب")
@@ -426,6 +422,7 @@ async def main():
     # حذف أي Webhook قديم
     await app.bot.delete_webhook()
     
+    # إضافة معالجات
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("jobs", jobs_command))
     app.add_handler(CommandHandler("search", search_command))
@@ -439,18 +436,24 @@ async def main():
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_error_handler(error_handler)
 
+    # جدولة المهام
     app.job_queue.run_repeating(push_new_jobs, interval=NOTIFY_INTERVAL_SECONDS, first=15)
 
     logger.info(f"🤖 البوت شغال للمستخدم: {ALLOWED_USER_IDS[0]}")
     
+    # بدء التطبيق
     await app.initialize()
     await app.start()
+    
+    # ✅ حل مشكلة Conflict: انتظر قليلاً ثم ابدأ polling مع تجاهل التحديثات المعلقة
+    await asyncio.sleep(1)  # تأخير بسيط للتأكد من أن webhook محذوف تماماً
     await app.updater.start_polling(
-        drop_pending_updates=True,  # 🔥 يحل مشكلة Conflict
+        drop_pending_updates=True,
         allowed_updates=[],
         bootstrap_retries=-1,
     )
     
+    # الانتظار حتى الإيقاف
     try:
         while True:
             await asyncio.sleep(3600)
