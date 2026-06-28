@@ -1,6 +1,4 @@
--- شغّل الكود ده مرة واحدة في Supabase: SQL Editor > New query > Run
--- (لو كنت شغّلت نسخة قديمة من الملف ده قبل كده، الكود تحت بيضيف الأعمدة الجديدة بأمان من غير ما يمسح بياناتك)
-
+-- إنشاء جدول الوظائف مع عمود المصدر
 create table if not exists jobs (
   id uuid primary key default gen_random_uuid(),
   title text not null,
@@ -12,16 +10,16 @@ create table if not exists jobs (
   url text unique not null,
   contact_email text,
   contact_phone text,
-  status text default 'pending',     -- pending | saved | ignored | expired
-  notified boolean default false,    -- هل البوت بعتها تلقائيًا قبل كده؟
+  source text default 'unknown',   -- العمود الجديد
+  status text default 'pending',
+  notified boolean default false,
   created_at timestamptz default now()
 );
 
--- لو الجدول كان موجود من قبل من غير الأعمدة الجديدة، نضيفهم هنا
-alter table jobs add column if not exists experience text;
-alter table jobs add column if not exists min_experience int;
+-- إضافة العمود إذا كان الجدول موجوداً مسبقاً
+alter table jobs add column if not exists source text default 'unknown';
 
--- جدول صغير لحفظ إعدادات بسيطة زي ملف الـ CV
+-- باقي الجداول والإندكسات كما هي
 create table if not exists settings (
   key text primary key,
   value text
@@ -29,3 +27,4 @@ create table if not exists settings (
 
 create index if not exists idx_jobs_status on jobs (status);
 create index if not exists idx_jobs_notified on jobs (notified);
+create index if not exists idx_jobs_source on jobs (source);  -- إندكس جديد للمصدر
