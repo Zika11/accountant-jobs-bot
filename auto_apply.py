@@ -1,58 +1,76 @@
-# auto_apply.py - تقديم تلقائي عبر واتساب أو إيميل
+# auto_apply.py
+"""
+تقديم تلقائي على الوظائف عبر واتساب
+"""
+
 import os
-import urllib.parse
-import requests
+import re
+import asyncio
+import logging
+from urllib.parse import quote
 from message_templates import build_cover_letter
 
-APPLICANT_NAME = os.environ.get("APPLICANT_NAME", "")
-APPLICANT_PHONE = os.environ.get("APPLICANT_PHONE", "")
-APPLICANT_EMAIL = os.environ.get("APPLICANT_EMAIL", "")
+logger = logging.getLogger(__name__)
 
-def auto_apply_job(job: dict) -> dict:
+WHATSAPP_NUMBER = os.environ.get("WHATSAPP_NUMBER", "")
+
+
+async def auto_apply_whatsapp(job: dict, bot, chat_id) -> dict:
     """
-    يحاول التقديم على الوظيفة تلقائيًا.
-    الأولوية: واتساب > إيميل
+    يقوم بالتقديم على الوظيفة عبر واتساب
+    - يرسل الـ CV
+    - يرسل رسالة التقديم
     """
-    phone = job.get("contact_phone")
-    email = job.get("contact_email")
-    
-    if not phone and not email:
-        return {"success": False, "message": "مفيش وسيلة تواصل في الوظيفة"}
-    
-    message = build_cover_letter(job)
-    
-    # 1. محاولة واتساب
-    if phone:
-        clean_phone = phone.strip().replace(" ", "").replace("-", "")
+    try:
+        phone = job.get("contact_phone")
+        if not phone:
+            return {"success": False, "error": "مفيش رقم واتساب"}
+        
+        # تنظيف الرقم
+        clean_phone = re.sub(r"\D", "", phone)
         if clean_phone.startswith("0"):
-            clean_phone = "2" + clean_phone
-        wa_link = f"https://wa.me/{clean_phone}?text={urllib.parse.quote(message)}"
-        # إرسال عبر واتساب (باستخدام requests أو selenium)
-        # حالياً: نفتح الرابط بس أو نرسل طلب
-        try:
-            # هنا ممكن تستخدم API تابع لواتساب أو ترسل طلب GET لفتح الرابط
-            # حالياً: نعتبر إن التقديم نجح لو الرابط اتحضر
-            return {
-                "success": True,
-                "message": f"تم فتح واتساب للرقم {phone}",
-                "link": wa_link,
-                "method": "whatsapp"
-            }
-        except Exception as e:
-            return {"success": False, "message": f"فشل واتساب: {str(e)}"}
-    
-    # 2. محاولة إيميل
-    elif email:
-        subject = f"تقديم على وظيفة {job.get('title', '')}"
-        mailto_link = f"mailto:{email}?subject={urllib.parse.quote(subject)}&body={urllib.parse.quote(message)}"
-        try:
-            return {
-                "success": True,
-                "message": f"تم فتح الإيميل لـ {email}",
-                "link": mailto_link,
-                "method": "email"
-            }
-        except Exception as e:
-            return {"success": False, "message": f"فشل الإيميل: {str(e)}"}
-    
-    return {"success": False, "message": "مفيش طريقة تواصل مناسبة"}
+            clean_phone = "2" + clean_phone[1:]
+        elif clean_phone.startswith("20"):
+            clean_phone = clean_phone
+        
+        # بناء رابط واتساب
+        message = build_cover_letter(job)
+        encoded_msg = quote(message)
+        wa_link = f"https://wa.me/{clean_phone}?text={encoded_msg}"
+        
+        # إرسال رابط واتساب للمستخدم عشان يضغط عليه
+        await bot.send_message(
+            chat_id=chat_id,
+            text=f"🚀 جاهز للتقديم على {job['title']} في {job.get('company', '')}",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("📱 افتح واتساب للتقديم", url=wa_link)
+            ]])
+        )
+        
+        # إرسال الـ CV
+        cv_file_id = os.environ.get("CV_FILE_ID")
+        if cv_file_id:
+            await bot.send_document(
+                chat_id=chat_id,
+                document=cv_file_id,
+                caption=f"📎 CV للتقديم على {job['title']}"
+            )
+        
+        # تسجيل التقديم
+        log_application(job["id"], "whatsapp", clean_phone)
+        
+        return {"success": True, "link": wa_link}
+        
+    except Exception as e:
+        logger.error(f"❌ فشل التقديم التلقائي: {e}")
+        return {"success": False, "error": str(e)}
+
+
+def log_application(job_id: str, method: str, contact: str):
+    """تسجيل عملية التقديم في قاعدة البيانات"""
+    try:
+        from db import update_status
+        update_status(job_id, "applied")
+        logger.info(f"✅ تم التقديم على {job_id} عبر {method} -> {contact}")
+    except Exception as e:
+        logger.error(f"❌ فشل تسجيل التقديم: {e}")
