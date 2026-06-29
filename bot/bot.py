@@ -1,6 +1,6 @@
-# bot/bot.py
 """
 بوت تليجرام لتقديم الوظائف تلقائياً (شخصي)
+بيشغل السكرابر تلقائياً عند بدء التشغيل
 """
 
 import asyncio
@@ -10,7 +10,7 @@ import threading
 import time
 from typing import List, Dict, Optional
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, CallbackQuery
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -55,14 +55,23 @@ NOTIFY_INTERVAL_SECONDS = int(os.environ.get("NOTIFY_INTERVAL_SECONDS", 6 * 60 *
 
 # ==================== Keep-Alive ====================
 def keep_alive():
-    """دالة تبقي البوت شغال طول الوقت"""
     while True:
-        time.sleep(300)  # كل 5 دقايق
+        time.sleep(300)
         logger.info("🔄 البوت لسه شغال...")
+threading.Thread(target=keep_alive, daemon=True).start()
 
-# تشغيل الـ keep-alive في خيط منفصل
-_thread = threading.Thread(target=keep_alive, daemon=True)
-_thread.start()
+# ==================== تشغيل السكرابر ====================
+def run_scraper():
+    """تشغيل سكرابر جمع الوظائف من Wuzzuf"""
+    try:
+        import sys
+        sys.path.insert(0, '/app')
+        from scraper.wuzzuf_scraper import main as scraper_main
+        logger.info("🔄 بدء جمع الوظائف...")
+        scraper_main()
+        logger.info("✅ تم جمع الوظائف بنجاح")
+    except Exception as e:
+        logger.error(f"❌ فشل السكرابر: {e}")
 
 # ==================== أدوات مساعدة ====================
 
@@ -511,6 +520,10 @@ async def main():
     if not ALLOWED_USER_IDS:
         logger.warning("⚠️ ALLOWED_USER_IDS غير محدد - البوت مش هيشتغل")
         return
+
+    logger.info("🔄 تشغيل السكرابر لأول مرة...")
+    run_scraper()
+
     logger.info(f"🤖 بدء تشغيل البوت للمستخدم: {ALLOWED_USER_IDS[0]}")
     app = Application.builder().token(BOT_TOKEN).build()
     await app.bot.delete_webhook()
