@@ -33,11 +33,7 @@ def get_client() -> Client:
 # ==================== دوال الوظائف (jobs) ====================
 
 def insert_jobs(jobs: List[Dict]) -> int:
-    """
-    إدراج أو تحديث وظائف جديدة
-    - لو الوظيفة موجودة (نفس الرابط)، يتم تحديث كل الحقول
-    - إزالة ignore_duplicates=True عشان يحدث البيانات القديمة
-    """
+    """إدراج أو تحديث وظائف جديدة"""
     if not jobs:
         return 0
 
@@ -139,25 +135,58 @@ def get_job_by_id(job_id: str) -> Optional[Dict]:
 
 
 def search_jobs(keyword: str, limit: int = 15) -> List[Dict]:
-    """بحث في الوظائف (العنوان، الشركة، المكان، المصدر) - فقط pending و saved"""
+    """بحث في الوظائف - يدعم كلمات متعددة"""
     client = get_client()
-    keyword = keyword.replace(",", " ").replace("%", " ").strip()
-    pattern = f"%{keyword}%"
-
-    try:
-        result = (
-            client.table("jobs")
-            .select("*")
-            .or_(f"title.ilike.{pattern},company.ilike.{pattern},location.ilike.{pattern},source.ilike.{pattern}")
-            .in_("status", ["pending", "saved"])
-            .order("created_at", desc=True)
-            .limit(limit)
-            .execute()
-        )
-        return result.data or []
-    except Exception as e:
-        print(f"⚠️ فشل search_jobs: {e}")
+    keyword = keyword.strip()
+    if not keyword:
         return []
+
+    # تقسيم الكلمات للبحث
+    terms = keyword.split()
+    
+    # لو في كلمة واحدة، استخدم or_ العادية
+    if len(terms) == 1:
+        pattern = f"%{keyword}%"
+        try:
+            result = (
+                client.table("jobs")
+                .select("*")
+                .or_(f"title.ilike.{pattern},company.ilike.{pattern},location.ilike.{pattern},source.ilike.{pattern}")
+                .in_("status", ["pending", "saved"])
+                .order("created_at", desc=True)
+                .limit(limit)
+                .execute()
+            )
+            return result.data or []
+        except Exception as e:
+            print(f"⚠️ فشل search_jobs: {e}")
+            return []
+    else:
+        # لكلمات متعددة، نجمع النتائج من كل كلمة ونتجنب التكرار
+        all_results = []
+        seen_urls = set()
+        for term in terms:
+            pattern = f"%{term}%"
+            try:
+                result = (
+                    client.table("jobs")
+                    .select("*")
+                    .or_(f"title.ilike.{pattern},company.ilike.{pattern},location.ilike.{pattern},source.ilike.{pattern}")
+                    .in_("status", ["pending", "saved"])
+                    .order("created_at", desc=True)
+                    .limit(limit)
+                    .execute()
+                )
+                for job in result.data or []:
+                    if job['url'] not in seen_urls:
+                        seen_urls.add(job['url'])
+                        all_results.append(job)
+            except Exception as e:
+                print(f"⚠️ فشل search_jobs للكلمة {term}: {e}")
+        
+        # رتب حسب الأحدث
+        all_results.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+        return all_results[:limit]
 
 
 def get_stats() -> Dict:
