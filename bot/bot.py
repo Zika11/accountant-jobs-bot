@@ -1,6 +1,7 @@
 # bot/bot.py
 """
 بوت تليجرام لتقديم الوظائف تلقائياً (شخصي)
+يدعم: محاسب، محاسب حديث التخرج، فلترة خبرة 0-3 سنوات
 """
 
 import asyncio
@@ -8,11 +9,9 @@ import logging
 import os
 import subprocess
 import sys
-import threading
-import time
 from typing import List, Dict, Optional
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, CallbackQuery
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -55,22 +54,14 @@ AUTO_APPLY_ENABLED = os.environ.get("AUTO_APPLY_ENABLED", "false").lower() == "t
 WHATSAPP_NUMBER = os.environ.get("WHATSAPP_NUMBER", "")
 NOTIFY_INTERVAL_SECONDS = int(os.environ.get("NOTIFY_INTERVAL_SECONDS", 6 * 60 * 60))
 
-# ==================== Keep-Alive (يخلي البوت شغال 24/7) ====================
-def keep_alive():
-    """دالة للحفاظ على البوت شغال"""
-    while True:
-        time.sleep(300)  # كل 5 دقائق
-        logger.info("🔄 البوت لسه شغال...")
-
-# بدء الـ keep-alive في خيط منفصل
-threading.Thread(target=keep_alive, daemon=True).start()
-
 # ==================== أدوات مساعدة ====================
 
 def is_allowed_user(user_id: int) -> bool:
+    """التحقق من صلاحية المستخدم"""
     return str(user_id) in ALLOWED_USER_IDS
 
 def format_job_text(job: dict, show_apply_status: bool = True) -> str:
+    """تنسيق نص الوظيفة للعرض"""
     lines = [f"📌 {job['title']}"]
     if job.get("company"):
         lines.append(f"🏢 {job['company']}")
@@ -105,6 +96,7 @@ def format_job_text(job: dict, show_apply_status: bool = True) -> str:
     return "\n".join(lines)
 
 def build_job_keyboard(job: dict, show_actions: bool = True, auto_apply_enabled: bool = None) -> InlineKeyboardMarkup:
+    """بناء أزرار الوظيفة"""
     if auto_apply_enabled is None:
         auto_apply_enabled = AUTO_APPLY_ENABLED
     buttons = []
@@ -139,6 +131,7 @@ async def send_jobs_digest(
     header: str,
     show_apply_status: bool = False
 ):
+    """إرسال قائمة وظائف مجمعة مع تقسيم الرسالة الطويلة"""
     if not jobs:
         return
     lines = [header, ""]
@@ -165,31 +158,10 @@ async def send_jobs_digest(
     else:
         await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=InlineKeyboardMarkup(keyboard_rows))
 
-# ==================== دالة تشغيل السكرابر ====================
-
-def run_scraper() -> dict:
-    """تشغيل سكريبت جمع الوظائف وإرجاع النتيجة"""
-    try:
-        result = subprocess.run(
-            [sys.executable, "scraper/wuzzuf_scraper.py"],
-            capture_output=True,
-            text=True,
-            timeout=120
-        )
-        return {
-            "success": result.returncode == 0,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-            "code": result.returncode
-        }
-    except subprocess.TimeoutExpired:
-        return {"success": False, "error": "انتهى الوقت - السكرابر بطيء"}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
 # ==================== الأوامر ====================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """أمر /start - تسجيل المستخدم وعرض الترحيب"""
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
     name = update.effective_user.first_name or "صديقي"
@@ -221,12 +193,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/profile — عرض ملفك الشخصي\n"
         "/auto_on — تشغيل التقديم التلقائي\n"
         "/auto_off — إيقاف التقديم التلقائي\n"
-        "/scrape — تشغيل جمع الوظائف يدوياً\n"
+        "/scrape — تشغيل السكرابر يدوي\n"
         "/help — عرض المساعدة"
     )
     await update.message.reply_text(reply, parse_mode=ParseMode.HTML)
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """أمر /help - عرض المساعدة"""
     user_id = update.effective_user.id
     if not is_allowed_user(user_id):
         await update.message.reply_text("⛔ غير مسموح.")
@@ -246,59 +219,43 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/auto_on — تشغيل التقديم التلقائي\n"
         "/auto_off — إيقاف التقديم التلقائي\n\n"
         "<b>أوامر إضافية:</b>\n"
-        "/scrape — تشغيل جمع الوظائف يدوياً\n"
         "/stats — إحصائيات عامة\n"
+        "/scrape — تشغيل السكرابر يدوي\n"
         "/help — عرض هذه المساعدة\n\n"
         "💡 <b>نصيحة:</b> استخدم أزرار التفاصيل للوصول إلى خيارات التقديم والحفظ."
     )
     await update.message.reply_text(help_text, parse_mode=ParseMode.HTML)
 
-async def scrape_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """أمر /scrape - تشغيل السكرابر لجمع الوظائف"""
-    user_id = update.effective_user.id
-    if not is_allowed_user(user_id):
-        await update.message.reply_text("⛔ غير مسموح.")
-        return
-    
-    await update.message.reply_text("🔄 جاري جمع الوظائف... استنى شوية ⏳")
-    
-    result = run_scraper()
-    
-    if result["success"]:
-        await update.message.reply_text(
-            f"✅ تم جمع الوظائف بنجاح!\n\n"
-            f"📊 النتيجة:\n{result['stdout'][-500:]}"
-        )
-    else:
-        await update.message.reply_text(
-            f"❌ فشل جمع الوظائف:\n"
-            f"{result.get('error', result.get('stderr', 'خطأ غير معروف'))[-500:]}"
-        )
-
 async def jobs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """أمر /jobs - عرض الوظائف الجديدة"""
     user_id = update.effective_user.id
     if not is_allowed_user(user_id):
         await update.message.reply_text("⛔ غير مسموح.")
         return
-    jobs = get_pending_jobs(limit=15)
+    jobs = get_pending_jobs(limit=20)
     if not jobs:
         await update.message.reply_text("📭 لا يوجد وظائف جديدة دلوقتي 🙏")
         return
     await send_jobs_digest(context, update.effective_chat.id, jobs, f"📋 آخر الوظائف ({len(jobs)}):")
 
 async def pending_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """أمر /pending - عرض الوظائف قيد الانتظار"""
     user_id = update.effective_user.id
     if not is_allowed_user(user_id):
         await update.message.reply_text("⛔ غير مسموح.")
         return
-    jobs = get_pending_jobs(limit=15)
+    jobs = get_pending_jobs(limit=20)
     if not jobs:
         await update.message.reply_text("📭 مفيش وظائف قيد الانتظار.")
         return
     for job in jobs:
-        await update.message.reply_text(format_job_text(job), reply_markup=build_job_keyboard(job, show_actions=True))
+        await update.message.reply_text(
+            format_job_text(job),
+            reply_markup=build_job_keyboard(job, show_actions=True)
+        )
 
 async def applied_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """أمر /applied - عرض الوظائف المتقدّم عليها"""
     user_id = update.effective_user.id
     if not is_allowed_user(user_id):
         await update.message.reply_text("⛔ غير مسموح.")
@@ -308,9 +265,13 @@ async def applied_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📭 مفيش وظائف متقدّم عليها.")
         return
     for job in jobs:
-        await update.message.reply_text(format_job_text(job), reply_markup=build_job_keyboard(job, show_actions=False))
+        await update.message.reply_text(
+            format_job_text(job),
+            reply_markup=build_job_keyboard(job, show_actions=False)
+        )
 
 async def saved_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """أمر /saved - عرض الوظائف المحفوظة"""
     user_id = update.effective_user.id
     if not is_allowed_user(user_id):
         await update.message.reply_text("⛔ غير مسموح.")
@@ -320,9 +281,13 @@ async def saved_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📭 مفيش وظائف محفوظة.")
         return
     for job in jobs:
-        await update.message.reply_text(format_job_text(job), reply_markup=build_job_keyboard(job, show_actions=True))
+        await update.message.reply_text(
+            format_job_text(job),
+            reply_markup=build_job_keyboard(job, show_actions=True)
+        )
 
 async def ignored_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """أمر /ignored - عرض الوظائف المتجاهلة"""
     user_id = update.effective_user.id
     if not is_allowed_user(user_id):
         await update.message.reply_text("⛔ غير مسموح.")
@@ -332,9 +297,13 @@ async def ignored_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📭 مفيش وظائف متجاهلة.")
         return
     for job in jobs:
-        await update.message.reply_text(format_job_text(job), reply_markup=build_job_keyboard(job, show_actions=False))
+        await update.message.reply_text(
+            format_job_text(job),
+            reply_markup=build_job_keyboard(job, show_actions=False)
+        )
 
 async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """أمر /search - بحث في الوظائف"""
     user_id = update.effective_user.id
     if not is_allowed_user(user_id):
         await update.message.reply_text("⛔ غير مسموح.")
@@ -350,6 +319,7 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_jobs_digest(context, update.effective_chat.id, jobs, f'🔍 نتايج البحث عن "{keyword}":')
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """أمر /stats - عرض الإحصائيات"""
     user_id = update.effective_user.id
     if not is_allowed_user(user_id):
         await update.message.reply_text("⛔ غير مسموح.")
@@ -372,6 +342,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 async def setcv_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """أمر /setcv - رفع ملف CV"""
     user_id = update.effective_user.id
     if not is_allowed_user(user_id):
         await update.message.reply_text("⛔ غير مسموح.")
@@ -380,6 +351,7 @@ async def setcv_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📎 ابعتلي ملف الـ CV بصيغة PDF")
 
 async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج رفع الملفات - حفظ الـ CV"""
     user_id = update.effective_user.id
     if not is_allowed_user(user_id):
         await update.message.reply_text("⛔ غير مسموح.")
@@ -397,6 +369,7 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ تم حفظ الـ CV بنجاح!")
 
 async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """أمر /profile - عرض الملف الشخصي"""
     user_id = str(update.effective_user.id)
     if not is_allowed_user(int(user_id)):
         await update.message.reply_text("⛔ غير مسموح.")
@@ -421,6 +394,7 @@ async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 async def auto_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """أمر /auto_on - تشغيل التقديم التلقائي"""
     user_id = update.effective_user.id
     if not is_allowed_user(user_id):
         await update.message.reply_text("⛔ غير مسموح.")
@@ -429,6 +403,7 @@ async def auto_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ تم تشغيل التقديم التلقائي")
 
 async def auto_off_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """أمر /auto_off - إيقاف التقديم التلقائي"""
     user_id = update.effective_user.id
     if not is_allowed_user(user_id):
         await update.message.reply_text("⛔ غير مسموح.")
@@ -436,9 +411,35 @@ async def auto_off_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     upsert_user_profile(str(user_id), {"auto_apply": False})
     await update.message.reply_text("❌ تم إيقاف التقديم التلقائي")
 
+async def scrape_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """أمر /scrape - تشغيل السكرابر يدوي"""
+    user_id = update.effective_user.id
+    if not is_allowed_user(user_id):
+        await update.message.reply_text("⛔ غير مسموح.")
+        return
+    await update.message.reply_text("🔄 جاري جمع الوظائف... استنى شوية ⏳")
+    try:
+        # ✅ تشغيل manager.py عشان يجيب من كل المصادر
+        result = subprocess.run(
+            [sys.executable, "scraper/manager.py"],
+            capture_output=True,
+            text=True,
+            timeout=180
+        )
+        output = result.stdout[-800:] if result.stdout else result.stderr[-800:]
+        if result.returncode == 0:
+            await update.message.reply_text(f"✅ تم جمع الوظائف بنجاح!\n\n{output}")
+        else:
+            await update.message.reply_text(f"❌ فشل الجمع:\n\n{output}")
+    except subprocess.TimeoutExpired:
+        await update.message.reply_text("⏰ استغرق السكرابر وقتاً طويلاً. حاول مرة أخرى.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ خطأ: {e}")
+
 # ==================== معالج الأزرار ====================
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج ضغط الأزرار"""
     query = update.callback_query
     await query.answer()
     user_id = update.effective_user.id
@@ -483,7 +484,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action in ("prep_wa", "prep_email"):
         cv_file_id = get_setting("cv_file_id")
         if cv_file_id:
-            await context.bot.send_document(chat_id=chat_id, document=cv_file_id, caption="📎 الـ CV الخاص بك - جاهز للإرفاق")
+            await context.bot.send_document(
+                chat_id=chat_id,
+                document=cv_file_id,
+                caption="📎 الـ CV الخاص بك - جاهز للإرفاق"
+            )
         if action == "prep_wa":
             link = build_whatsapp_link(job)
             label = "📩 فتح واتساب"
@@ -493,7 +498,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not link:
             await query.message.reply_text("❌ مفيش وسيلة تواصل متاحة.")
             return
-        await query.message.reply_text(build_cover_letter(job), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(label, url=link)]]))
+        await query.message.reply_text(
+            build_cover_letter(job),
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(label, url=link)]])
+        )
         return
     if action == "save":
         update_status(job_id, "saved")
@@ -510,6 +518,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==================== المهمة الدورية ====================
 
 async def push_new_jobs(context: ContextTypes.DEFAULT_TYPE):
+    """إشعار دوري بالوظائف الجديدة مع التقديم التلقائي"""
     if not ALLOWED_USER_IDS:
         return
     jobs = get_unnotified_jobs(limit=20)
@@ -531,49 +540,47 @@ async def push_new_jobs(context: ContextTypes.DEFAULT_TYPE):
                     if result["success"]:
                         update_status(job["id"], "applied")
                         mark_notified(job["id"])
-                        await context.bot.send_message(chat_id=chat_id, text=f"✅ تم التقديم تلقائياً على: {job['title']} - {job.get('company', '')}")
+                        await context.bot.send_message(
+                            chat_id=chat_id,
+                            text=f"✅ تم التقديم تلقائياً على: {job['title']} - {job.get('company', '')}"
+                        )
                         jobs_to_send.remove(job)
                     else:
                         logger.error(f"فشل التقديم على {job['title']}: {result['error']}")
         if jobs_to_send:
-            await send_jobs_digest(context, chat_id, jobs_to_send, f"🆕 وظائف جديدة ({len(jobs_to_send)}):")
+            await send_jobs_digest(
+                context,
+                chat_id,
+                jobs_to_send,
+                f"🆕 وظائف جديدة ({len(jobs_to_send)}):"
+            )
             for job in jobs_to_send:
                 mark_notified(job["id"])
-
-# ==================== تشغيل السكرابر عند بداية البوت ====================
-
-def run_scraper_on_startup():
-    """تشغيل السكرابر مرة واحدة عند بداية البوت"""
-    logger.info("🔄 تشغيل السكرابر عند بداية البوت...")
-    result = run_scraper()
-    if result["success"]:
-        logger.info(f"✅ السكرابر اشتغل بنجاح: {result['stdout'][:200]}")
-    else:
-        logger.error(f"❌ فشل السكرابر: {result.get('error', result.get('stderr', 'خطأ'))}")
 
 # ==================== معالج الأخطاء ====================
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    """معالج الأخطاء العام"""
     logger.error(f"⚠️ خطأ: {context.error}")
     if update and hasattr(update, 'effective_chat'):
         try:
-            await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ عذرا، حدث خطأ. حاول مرة أخرى.")
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="❌ عذرا، حدث خطأ. حاول مرة أخرى."
+            )
         except:
             pass
 
 # ==================== التشغيل ====================
 
 async def main():
+    """الدالة الرئيسية لتشغيل البوت"""
     if not BOT_TOKEN:
         raise RuntimeError("❌ BOT_TOKEN مطلوب")
     if not ALLOWED_USER_IDS:
         logger.warning("⚠️ ALLOWED_USER_IDS غير محدد - البوت مش هيشتغل")
         return
     logger.info(f"🤖 بدء تشغيل البوت للمستخدم: {ALLOWED_USER_IDS[0]}")
-    
-    # تشغيل السكرابر عند بداية البوت (مرة واحدة)
-    run_scraper_on_startup()
-    
     app = Application.builder().token(BOT_TOKEN).build()
     await app.bot.delete_webhook()
     app.add_handler(CommandHandler("start", start))
@@ -589,7 +596,7 @@ async def main():
     app.add_handler(CommandHandler("profile", profile_command))
     app.add_handler(CommandHandler("auto_on", auto_on_command))
     app.add_handler(CommandHandler("auto_off", auto_off_command))
-    app.add_handler(CommandHandler("scrape", scrape_command))  # ← الأمر الجديد
+    app.add_handler(CommandHandler("scrape", scrape_command))
     app.add_handler(MessageHandler(filters.Document.ALL, document_handler))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_error_handler(error_handler)
