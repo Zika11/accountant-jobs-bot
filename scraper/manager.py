@@ -1,4 +1,8 @@
 # scraper/manager.py
+"""
+مدير جمع الوظائف من جميع المصادر
+"""
+
 import os
 import sys
 import time
@@ -33,7 +37,7 @@ from db import insert_jobs, expire_old_jobs, log_scraper_error
 
 
 def get_all_providers():
-    location_filter = [loc.strip() for loc in os.environ.get("LOCATION_FILTER", "Cairo,Giza,Menoufia").split(',') if loc.strip()]
+    location_filter = [loc.strip() for loc in os.environ.get("LOCATION_FILTER", "").split(',') if loc.strip()]
     max_exp = os.environ.get("MAX_EXPERIENCE_YEARS")
     max_exp = int(max_exp) if max_exp and max_exp.isdigit() else 3
 
