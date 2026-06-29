@@ -8,13 +8,18 @@ class JobProvider(ABC):
     @property
     @abstractmethod
     def source_name(self) -> str:
+        """اسم المصدر (يظهر في قاعدة البيانات)"""
         pass
 
     @abstractmethod
     def fetch_jobs(self, search_term: str, max_pages: int = 3) -> List[Dict]:
+        """
+        يرجع قائمة بالوظائف بتنسيق موحد
+        """
         pass
 
     def _normalize_job(self, job: Dict) -> Dict:
+        """تطبيع الحقول للتأكد من وجود كل المفاتيح"""
         defaults = {
             'title': '',
             'company': '',
@@ -31,6 +36,7 @@ class JobProvider(ABC):
         return normalized
 
     def _location_matches(self, location: str) -> bool:
+        """التحقق من تطابق الموقع مع الفلتر"""
         location_filter = getattr(self, 'location_filter', [])
         if not location_filter or not location:
             return True
@@ -38,6 +44,7 @@ class JobProvider(ABC):
         return any(loc.lower() in location_lower for loc in location_filter)
 
     def _experience_matches(self, job: Dict) -> bool:
+        """التحقق من أن الخبرة المطلوبة أقل من الحد الأقصى"""
         max_exp = getattr(self, 'max_experience_years', None)
         if max_exp is None:
             return True
