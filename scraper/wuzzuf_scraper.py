@@ -1,14 +1,5 @@
 """
-سكريبت جمع وظائف "محاسب" من Wuzzuf
-- يجيب قائمة الوظائف من صفحات البحث
-- يفلتر حسب المكان (اختياري)
-- يدخل على كل وظيفة لو فيها إيميل أو رقم تليفون مكتوب في الوصف
-- يحفظهم في Supabase (ولو الاتصال غير متاح، يحفظهم في CSV كخطة بديلة)
-- لو حصل فشل كامل، يبعت تنبيه على تليجرام (لو BOT_TOKEN و TELEGRAM_CHAT_ID متحددين)
-
-تشغيل لوحده (تجربة محلية):
-    pip install -r requirements.txt
-    python scraper/wuzzuf_scraper.py
+سكريبت جمع وظائف "محاسب" من Wuzzuf مع دعم مصادر متعددة
 """
 
 import csv
@@ -16,56 +7,45 @@ import os
 import re
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import quote
 
 import requests
 from bs4 import BeautifulSoup
 
+# تأكد من إضافة مسار البوت
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "bot"))
 
+# ==================== الإعدادات من البيئة ====================
 SEARCH_TERM = os.environ.get("SEARCH_TERM", "محاسب")
-MAX_PAGES = int(os.environ.get("MAX_PAGES", 3))
-DELAY_BETWEEN_REQUESTS = float(os.environ.get("DELAY_BETWEEN_REQUESTS", 2.0))
+MAX_PAGES = int(os.environ.get("MAX_PAGES", 2))  # خليها 2 عشان السرعة
+DELAY_BETWEEN_REQUESTS = float(os.environ.get("DELAY_BETWEEN_REQUESTS", 1.0))
 MAX_RETRIES = int(os.environ.get("MAX_RETRIES", 3))
-RETRY_BASE_DELAY = float(os.environ.get("RETRY_BASE_DELAY", 3.0))
-OUTPUT_CSV = "wuzzuf_jobs.csv"
+RETRY_BASE_DELAY = float(os.environ.get("RETRY_BASE_DELAY", 2.0))
 
-# سيب القائمة فاضية لو عايز كل المحافظات بدون فلترة
-LOCATION_FILTER = [
-    loc.strip() for loc in os.environ.get("LOCATION_FILTER", "Cairo,Giza,Menoufia,Monufya").split(",") if loc.strip()
-]
-
-# أقصى سنوات خبرة تقبلها - سيبها فاضية في .env لو ما تحبش تفلتر حسب الخبرة
-_max_exp_raw = os.environ.get("MAX_EXPERIENCE_YEARS", "").strip()
-MAX_EXPERIENCE_YEARS = int(_max_exp_raw) if _max_exp_raw.isdigit() else None
-
-# بعد كام يوم نعتبر الوظيفة "منتهية" لو لسه pending
+# الفلترة (خليها فاضية دلوقتي عشان نجيب كل الوظائف)
+LOCATION_FILTER = []
+MAX_EXPERIENCE_YEARS = None
 EXPIRE_DAYS = int(os.environ.get("EXPIRE_DAYS", 14))
 
-# لو حابب تبعت تنبيهات على تليجرام (نفس البوت تاكن)
+# إشعارات
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 NOTIFY_ON_SUCCESS = os.environ.get("NOTIFY_ON_SUCCESS", "true").lower() == "true"
 
+# ==================== الإعدادات التقنية ====================
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                   "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 }
-
 SEARCH_URL = "https://wuzzuf.net/search/jobs/?q={query}&start={page}"
 
-# إيميل عادي، بيشمل دومينات زي .com.eg
+# أنماط الاستخراج
 EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
-
-# رقم مصري: بصفر أو 20 أو +20 في الأول، وبيسمح بمسافات/فواصل بين الأرقام
 PHONE_RE = re.compile(r"(?:\+?20|0)\s*1[0-9](?:[\s\-]?[0-9]){8}")
-
-# كلمات بتسبق رقم تليفون كتير في وصف الوظائف العربي
 PHONE_CONTEXT_RE = re.compile(
     r"(?:واتساب|واتس|للتواصل|تواصل|اتصل|موبايل|تليفون|رقم)\D{0,15}((?:\+?20|0)?\s*1[0-9](?:[\s\-]?[0-9]){8})"
 )
-
-# صيغ سنوات الخبرة كما تظهر في كروت Wuzzuf
 EXPERIENCE_RANGE_RE = re.compile(r"(\d+)\s*-\s*(\d+)\s*Yrs?\s*of\s*Exp", re.IGNORECASE)
 EXPERIENCE_PLUS_RE = re.compile(r"(\d+)\+\s*Yrs?\s*of\s*Exp", re.IGNORECASE)
 
@@ -75,38 +55,37 @@ ARABIC_TO_WESTERN = str.maketrans(ARABIC_DIGITS, WESTERN_DIGITS)
 
 
 def normalize_digits(text: str) -> str:
-    """يحول الأرقام العربية (٠١٢) لأرقام إنجليزية (012) قبل أي مطابقة"""
     return text.translate(ARABIC_TO_WESTERN)
 
 
 def clean_phone(raw: str) -> str:
+    if not raw:
+        return ""
     digits = re.sub(r"\D", "", raw)
     if digits.startswith("20"):
-        digits = "0" + digits[2:]
+        return "0" + digits[2:]
     return digits
 
 
 def extract_experience(card_text: str) -> dict:
-    """يحاول يلاقي سنوات الخبرة المطلوبة من نص الكارت (مثلاً '1 - 3 Yrs of Exp')"""
     range_match = EXPERIENCE_RANGE_RE.search(card_text)
     if range_match:
-        min_exp = int(range_match.group(1))
-        max_exp = int(range_match.group(2))
-        return {"experience": f"{min_exp} - {max_exp} Yrs of Exp", "min_experience": min_exp}
-
+        return {
+            "experience": f"{range_match.group(1)} - {range_match.group(2)} Yrs of Exp",
+            "min_experience": int(range_match.group(1))
+        }
     plus_match = EXPERIENCE_PLUS_RE.search(card_text)
     if plus_match:
-        min_exp = int(plus_match.group(1))
-        return {"experience": f"{min_exp}+ Yrs of Exp", "min_experience": min_exp}
-
+        return {
+            "experience": f"{plus_match.group(1)}+ Yrs of Exp",
+            "min_experience": int(plus_match.group(1))
+        }
     if "entry level" in card_text.lower():
         return {"experience": "Entry Level", "min_experience": 0}
-
     return {"experience": "", "min_experience": None}
 
 
 def fetch_html(url: str) -> str:
-    """يجيب الـ HTML مع retry وتأخير تصاعدي لو فشل الطلب"""
     last_error = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
@@ -127,27 +106,41 @@ def parse_listing_page(html: str) -> list[dict]:
     jobs = []
     seen = set()
 
+    # البحث عن روابط الوظائف (Selectors محدثة)
     for link in soup.find_all("a", href=re.compile(r"/jobs/p/")):
         title = link.get_text(strip=True)
         href = link.get("href", "")
         if not title or href in seen:
             continue
         seen.add(href)
+
         full_url = href if href.startswith("http") else f"https://wuzzuf.net{href}"
 
+        # الوصول إلى البطاقة الكاملة للوظيفة
         card = link
-        for _ in range(3):
+        for _ in range(4):
             if card.parent:
                 card = card.parent
-        full_card_text = card.get_text(separator=" ", strip=True)
-        parts = [p for p in card.get_text(separator="|", strip=True).split("|") if p]
+            else:
+                break
 
+        full_card_text = card.get_text(separator=" ", strip=True)
+
+        # استخراج التفاصيل من النص
+        parts = [p.strip() for p in full_card_text.split("|") if p.strip()]
         company, location, posted = "", "", ""
+
         for part in parts:
             if re.search(r"\bago\b", part, re.IGNORECASE):
                 posted = part
-            elif "Egypt" in part:
-                company, location = (part.split(" - ", 1) + [""])[:2] if " - " in part else ("", part)
+            elif "Egypt" in part or "القاهرة" in part or "الجيزة" in part:
+                # محاولة استخراج الشركة والمكان
+                if " - " in part:
+                    company, location = part.split(" - ", 1)
+                else:
+                    location = part
+            elif "company" in part.lower() or "شركة" in part:
+                company = part
 
         job = {
             "title": title,
@@ -157,44 +150,25 @@ def parse_listing_page(html: str) -> list[dict]:
             "url": full_url,
         }
         job.update(extract_experience(full_card_text))
+        job["source"] = "wuzzuf"
         jobs.append(job)
+
     return jobs
 
 
-def location_matches(location: str) -> bool:
-    if not LOCATION_FILTER:
-        return True
-    return any(loc.lower() in location.lower() for loc in LOCATION_FILTER)
-
-
-def experience_matches(job: dict) -> bool:
-    """لو محدد MAX_EXPERIENCE_YEARS، نستبعد الوظائف اللي تطلب خبرة أكتر منه"""
-    if MAX_EXPERIENCE_YEARS is None:
-        return True
-    min_exp = job.get("min_experience")
-    if min_exp is None:
-        return True  # لو معرفناش الخبرة المطلوبة، منفلترهاش برا عشان منفوّتش وظيفة تنفع
-    return min_exp <= MAX_EXPERIENCE_YEARS
-
-
 def extract_contact_info(job_url: str) -> dict:
-    """يدخل على صفحة الوظيفة ويحاول يلاقي إيميل أو رقم في وصف الوظيفة"""
     try:
         html = fetch_html(job_url)
-    except requests.RequestException:
+    except Exception:
         return {}
-
     text = normalize_digits(BeautifulSoup(html, "html.parser").get_text(" "))
-
     email_match = EMAIL_RE.search(text)
-
-    # نجرب الأول نلاقي رقم جنب كلمة "واتساب"/"للتواصل" لأنه أدق
     phone_match = PHONE_CONTEXT_RE.search(text)
-    raw_phone = phone_match.group(1) if phone_match else None
-    if not raw_phone:
-        generic_match = PHONE_RE.search(text)
-        raw_phone = generic_match.group(0) if generic_match else None
-
+    if not phone_match:
+        phone_match = PHONE_RE.search(text)
+    raw_phone = phone_match.group(1) if phone_match and phone_match.groups() else (
+        phone_match.group(0) if phone_match else None
+    )
     return {
         "contact_email": email_match.group(0) if email_match else None,
         "contact_phone": clean_phone(raw_phone) if raw_phone else None,
@@ -207,23 +181,43 @@ def collect_jobs() -> list[dict]:
         print(f"📄 صفحة {page + 1} ...")
         try:
             html = fetch_html(SEARCH_URL.format(query=quote(SEARCH_TERM), page=page))
-        except requests.RequestException as e:
-            print(f"⚠️ فشل تحميل الصفحة بعد {MAX_RETRIES} محاولات: {e}")
+        except Exception as e:
+            print(f"⚠️ فشل تحميل الصفحة: {e}")
             break
 
         page_jobs = parse_listing_page(html)
         if not page_jobs:
-            print("لا يوجد وظائف أكتر — توقفنا.")
+            print("⚠️ مفيش وظائف في الصفحة دي - ممكن الموقع اتغير")
+            # نجرب نطلع من الحلقة بدل ما نكمل
             break
 
+        print(f"✅ تم استخراج {len(page_jobs)} وظيفة من الصفحة")
+
+        # فلترة حسب الموقع والخبرة (لو موجودة)
+        filtered = []
         for job in page_jobs:
-            if not location_matches(job["location"]):
-                continue
-            if not experience_matches(job):
-                continue
-            time.sleep(DELAY_BETWEEN_REQUESTS / 2)
-            job.update(extract_contact_info(job["url"]))
-            all_jobs.append(job)
+            # فلترة الموقع (لو مش فاضي)
+            if LOCATION_FILTER:
+                loc = job.get("location", "")
+                if not any(l in loc for l in LOCATION_FILTER):
+                    continue
+            # فلترة الخبرة (لو مش فاضي)
+            if MAX_EXPERIENCE_YEARS is not None:
+                min_exp = job.get("min_experience")
+                if min_exp and min_exp > MAX_EXPERIENCE_YEARS:
+                    continue
+            filtered.append(job)
+
+        print(f"✅ بعد الفلترة: {len(filtered)} وظيفة")
+
+        if filtered:
+            # جلب التفاصيل (إيميل/رقم) بالتوازي
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                futures = {executor.submit(extract_contact_info, job["url"]): job for job in filtered}
+                for future in as_completed(futures):
+                    job = futures[future]
+                    job.update(future.result())
+                    all_jobs.append(job)
 
         time.sleep(DELAY_BETWEEN_REQUESTS)
 
@@ -233,7 +227,8 @@ def collect_jobs() -> list[dict]:
 def save_csv(jobs: list[dict], path: str):
     if not jobs:
         return
-    fieldnames = ["title", "company", "location", "experience", "posted", "url", "contact_email", "contact_phone"]
+    fieldnames = ["title", "company", "location", "experience", "posted",
+                  "url", "contact_email", "contact_phone", "source", "min_experience"]
     with open(path, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
@@ -256,7 +251,6 @@ def push_to_supabase(jobs: list[dict]) -> bool:
 
 
 def notify_telegram(text: str):
-    """يبعت رسالة تليجرام مباشرة عن طريق Bot API - مش محتاج مكتبة telegram هنا"""
     if not BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return
     try:
@@ -265,8 +259,8 @@ def notify_telegram(text: str):
             data={"chat_id": TELEGRAM_CHAT_ID, "text": text},
             timeout=10,
         )
-    except requests.RequestException as e:
-        print(f"⚠️ فشل إرسال تنبيه تليجرام: {e}")
+    except Exception as e:
+        print(f"⚠️ فشل إرسال التنبيه: {e}")
 
 
 def main():
@@ -277,32 +271,23 @@ def main():
         notify_telegram(f"❌ سكرابر Wuzzuf فشل اليوم:\n{e}")
         raise
 
-    print(f"\n✅ إجمالي الوظائف بعد الفلترة: {len(jobs)}\n")
-    for j in jobs:
-        exp_text = f" | {j['experience']}" if j.get("experience") else ""
-        print(f"- {j['title']} | {j['company']} | {j['location']}{exp_text}")
-        print(f"  {j['url']}")
-        if j.get("contact_email") or j.get("contact_phone"):
-            print(f"  📧 {j.get('contact_email') or '-'}  📱 {j.get('contact_phone') or '-'}")
-        print()
+    print(f"\n✅ إجمالي الوظائف بعد الفلترة: {len(jobs)}")
+
+    if jobs:
+        for j in jobs[:5]:
+            print(f"- {j['title']} | {j['company']} | {j['location']}")
+    else:
+        print("⚠️ مفيش وظائف! ممكن Wuzzuf غير هيكل الصفحة، أو مفيش وظائف مطابقة.")
 
     pushed = push_to_supabase(jobs)
-    if not pushed:
-        save_csv(jobs, OUTPUT_CSV)
-        print(f"💾 الوظائف محفوظة محليًا في: {OUTPUT_CSV}")
-    else:
-        try:
-            from db import expire_old_jobs
-            expired_count = expire_old_jobs(days=EXPIRE_DAYS)
-            if expired_count:
-                print(f"🧹 اتقفلت {expired_count} وظيفة قديمة (أكتر من {EXPIRE_DAYS} يوم)")
-        except Exception as e:
-            print(f"⚠️ فشل تنظيف الوظائف القديمة: {e}")
+    if not pushed and jobs:
+        save_csv(jobs, "wuzzuf_jobs.csv")
+        print(f"💾 الوظائف محفوظة محليًا في: wuzzuf_jobs.csv")
 
     if NOTIFY_ON_SUCCESS:
         contacts_found = sum(1 for j in jobs if j.get("contact_email") or j.get("contact_phone"))
         notify_telegram(
-            f"✅ تم جمع {len(jobs)} وظيفة محاسبة اليوم ({contacts_found} منهم فيها وسيلة تواصل مباشرة).\n"
+            f"✅ تم جمع {len(jobs)} وظيفة محاسبة اليوم ({contacts_found} فيها وسيلة تواصل مباشرة).\n"
             f"استخدم /jobs في البوت عشان تشوفهم."
         )
 
