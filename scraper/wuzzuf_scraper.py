@@ -1,9 +1,10 @@
 """
-سكريبت جمع وظائف "محاسب حديث التخرج" من Wuzzuf
+سكريبت جمع وظائف "محاسب" من Wuzzuf
 - يجيب قائمة الوظائف من صفحات البحث
-- يفلتر حسب الخبرة (0-3 سنوات)
+- يفلتر حسب المكان (اختياري)
+- يفلتر حسب أقصى 10 أيام من النشر
 - يدخل على كل وظيفة لو فيها إيميل أو رقم تليفون مكتوب في الوصف (بالتوازي)
-- يحفظهم في Supabase (ولو الاتصال غير متاح، يحفظهم في CSV كخطة بديلة)
+- يحفظهم في Supabase
 """
 
 import csv
@@ -28,10 +29,10 @@ MAX_RETRIES = int(os.environ.get("MAX_RETRIES", 3))
 RETRY_BASE_DELAY = float(os.environ.get("RETRY_BASE_DELAY", 3.0))
 OUTPUT_CSV = "wuzzuf_jobs.csv"
 
-# فلترة الموقع - شيلناها خالص
-LOCATION_FILTER = []
+# ✅ شيل فلترة الموقع خالص
+LOCATION_FILTER = []  # فاضية عشان تجيب كل المحافظات
 
-# فلترة الخبرة - 0-3 سنوات
+# ✅ خلي فلترة الخبرة شغالة (0-3 سنوات افتراضي)
 _max_exp_raw = os.environ.get("MAX_EXPERIENCE_YEARS", "3").strip()
 MAX_EXPERIENCE_YEARS = int(_max_exp_raw) if _max_exp_raw.isdigit() else 3
 
@@ -58,10 +59,8 @@ ARABIC_DIGITS = "٠١٢٣٤٥٦٧٨٩"
 WESTERN_DIGITS = "0123456789"
 ARABIC_TO_WESTERN = str.maketrans(ARABIC_DIGITS, WESTERN_DIGITS)
 
-
 def normalize_digits(text: str) -> str:
     return text.translate(ARABIC_TO_WESTERN)
-
 
 def clean_phone(raw: str) -> str:
     digits = re.sub(r"\D", "", raw)
@@ -69,21 +68,73 @@ def clean_phone(raw: str) -> str:
         digits = "0" + digits[2:]
     return digits
 
+def parse_posted_date(posted_text: str) -> int:
+    """
+    تحويل نص "منذ 3 أيام" إلى عدد الأيام
+    يرجع عدد الأيام (0 لو أقل من يوم، 99 لو مش معروف)
+    """
+    if not posted_text:
+        return 99
+
+    posted_text = posted_text.lower()
+
+    # منذ X أيام
+    days_match = re.search(r'(\d+)\s*يوم', posted_text)
+    if days_match:
+        return int(days_match.group(1))
+
+    # منذ X ساعات (أقل من يوم)
+    hours_match = re.search(r'(\d+)\s*ساعة', posted_text)
+    if hours_match:
+        return 0
+
+    # منذ X دقائق (أقل من يوم)
+    mins_match = re.search(r'(\d+)\s*دقيقة', posted_text)
+    if mins_match:
+        return 0
+
+    # Today / اليوم
+    if 'today' in posted_text or 'اليوم' in posted_text:
+        return 0
+
+    # Yesterday / أمس
+    if 'yesterday' in posted_text or 'أمس' in posted_text:
+        return 1
+
+    return 99  # مش معروف، نعتبره قديم
 
 def extract_experience(card_text: str) -> dict:
+    """استخراج سنوات الخبرة من نص الكارت مع دعم صيغ متعددة"""
+    # صيغة 1-3 Yrs of Exp
     range_match = EXPERIENCE_RANGE_RE.search(card_text)
     if range_match:
         min_exp = int(range_match.group(1))
         max_exp = int(range_match.group(2))
-        return {"experience": f"{min_exp} - {max_exp} Yrs of Exp", "min_experience": min_exp}
+        return {"experience": f"{min_exp} - {max_exp} Yrs", "min_experience": min_exp}
+
+    # صيغة 3+ Yrs of Exp
     plus_match = EXPERIENCE_PLUS_RE.search(card_text)
     if plus_match:
         min_exp = int(plus_match.group(1))
-        return {"experience": f"{min_exp}+ Yrs of Exp", "min_experience": min_exp}
+        return {"experience": f"{min_exp}+ Yrs", "min_experience": min_exp}
+
+    # صيغة عربية: "خبرة 3 سنوات"
+    arabic_match = re.search(r'خبرة\s*(\d+)\s*سنوات', card_text)
+    if arabic_match:
+        min_exp = int(arabic_match.group(1))
+        return {"experience": f"{min_exp} سنوات", "min_experience": min_exp}
+
+    # صيغة "أكثر من X سنوات"
+    more_than_match = re.search(r'أكثر من\s*(\d+)\s*سنوات', card_text)
+    if more_than_match:
+        min_exp = int(more_than_match.group(1))
+        return {"experience": f"{min_exp}+ سنوات", "min_experience": min_exp}
+
     if "entry level" in card_text.lower():
         return {"experience": "Entry Level", "min_experience": 0}
-    return {"experience": "", "min_experience": None}
 
+    # لو معرفناش، نخليها 99 عشان نفلترها لاحقاً
+    return {"experience": "", "min_experience": 99}
 
 def fetch_html(url: str) -> str:
     last_error = None
@@ -99,7 +150,6 @@ def fetch_html(url: str) -> str:
                 print(f"  ⏳ محاولة {attempt} فشلت ({e}) - بنحاول تاني بعد {wait:.0f} ثانية")
                 time.sleep(wait)
     raise last_error
-
 
 def parse_listing_page(html: str) -> list[dict]:
     soup = BeautifulSoup(html, "html.parser")
@@ -131,26 +181,30 @@ def parse_listing_page(html: str) -> list[dict]:
             "posted": posted.strip(),
             "url": full_url,
         }
+        # استخراج الخبرة
         job.update(extract_experience(full_card_text))
         job["source"] = "wuzzuf"
+
+        # ✅ فلترة حسب التاريخ (أقصى 10 أيام)
+        days_old = parse_posted_date(posted)
+        if days_old > 10:
+            continue
+        job['days_old'] = days_old
+
         jobs.append(job)
     return jobs
 
-
 def location_matches(location: str) -> bool:
-    if not LOCATION_FILTER:
-        return True
-    return any(loc.lower() in location.lower() for loc in LOCATION_FILTER)
-
+    # الفلترة معطلة دلوقتي
+    return True
 
 def experience_matches(job: dict) -> bool:
     if MAX_EXPERIENCE_YEARS is None:
         return True
     min_exp = job.get("min_experience")
     if min_exp is None:
-        return True
+        return False  # مش عارفين الخبرة، نستبعدها
     return min_exp <= MAX_EXPERIENCE_YEARS
-
 
 def extract_contact_info(job_url: str) -> dict:
     try:
@@ -168,7 +222,6 @@ def extract_contact_info(job_url: str) -> dict:
         "contact_email": email_match.group(0) if email_match else None,
         "contact_phone": clean_phone(raw_phone) if raw_phone else None,
     }
-
 
 def collect_jobs() -> list[dict]:
     all_jobs = []
@@ -190,6 +243,7 @@ def collect_jobs() -> list[dict]:
             if not experience_matches(job):
                 continue
             filtered_jobs.append(job)
+        print(f"✅ بعد الفلترة: {len(filtered_jobs)} وظيفة")
         if filtered_jobs:
             with ThreadPoolExecutor(max_workers=5) as executor:
                 futures = {executor.submit(extract_contact_info, job["url"]): job for job in filtered_jobs}
@@ -200,7 +254,6 @@ def collect_jobs() -> list[dict]:
         time.sleep(DELAY_BETWEEN_REQUESTS)
     return all_jobs
 
-
 def save_csv(jobs: list[dict], path: str):
     if not jobs:
         return
@@ -209,7 +262,6 @@ def save_csv(jobs: list[dict], path: str):
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(jobs)
-
 
 def push_to_supabase(jobs: list[dict]) -> bool:
     try:
@@ -225,7 +277,6 @@ def push_to_supabase(jobs: list[dict]) -> bool:
         print(f"⚠️ فشل الحفظ في Supabase: {e}")
         return False
 
-
 def notify_telegram(text: str):
     if not BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return
@@ -237,7 +288,6 @@ def notify_telegram(text: str):
         )
     except requests.RequestException as e:
         print(f"⚠️ فشل إرسال تنبيه تليجرام: {e}")
-
 
 def main():
     try:
@@ -275,7 +325,6 @@ def main():
             f"✅ تم جمع {len(jobs)} وظيفة محاسبة اليوم ({contacts_found} منهم فيها وسيلة تواصل مباشرة).\n"
             f"استخدم /jobs في البوت عشان تشوفهم."
         )
-
 
 if __name__ == "__main__":
     main()
