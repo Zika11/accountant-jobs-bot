@@ -11,7 +11,6 @@ sys.path.insert(0, '/app/bot')
 sys.path.insert(0, '/app/scraper')
 sys.path.insert(0, '/app/scraper/providers')
 
-# ✅ التعديل المهم: استخدم WuzzufProvider مش WuzzufScraper
 from providers.wuzzuf import WuzzufProvider
 from providers.forasna import ForasnaProvider
 from providers.bayt import BaytProvider
@@ -23,18 +22,25 @@ try:
         EgyptianJobsProvider,
         CareerEgyptProvider,
         TelegramProvider,
-        FacebookProvider,
     )
     EGYPT_PROVIDERS_AVAILABLE = True
 except ImportError as e:
     print(f"⚠️ مصر providers مش موجودة: {e}")
     EGYPT_PROVIDERS_AVAILABLE = False
 
+# ✅ فيسبوك بالمكتبة الجديدة
+try:
+    from providers.facebook_scraper_provider import FacebookScraperProvider
+    FACEBOOK_SCRAPER_AVAILABLE = True
+except ImportError as e:
+    print(f"⚠️ Facebook Scraper مش موجود: {e}")
+    FACEBOOK_SCRAPER_AVAILABLE = False
+
 from db import insert_jobs, expire_old_jobs, log_scraper_error
 
 
 def get_all_providers():
-    location_filter = []  # نشيل فلترة الموقع
+    location_filter = []
     max_exp = os.environ.get("MAX_EXPERIENCE_YEARS")
     max_exp = int(max_exp) if max_exp and max_exp.isdigit() else 3
 
@@ -50,7 +56,10 @@ def get_all_providers():
         providers.append(EgyptianJobsProvider(max_experience_years=max_exp))
         providers.append(CareerEgyptProvider(max_experience_years=max_exp))
         providers.append(TelegramProvider())
-        providers.append(FacebookProvider())
+
+    # ✅ فيسبوك شغال بالكوكيز
+    if FACEBOOK_SCRAPER_AVAILABLE:
+        providers.append(FacebookScraperProvider(max_experience_years=max_exp))
 
     return providers
 
