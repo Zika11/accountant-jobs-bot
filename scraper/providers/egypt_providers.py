@@ -4,8 +4,8 @@
 - Jobzella (HTML)
 - EgyptianJobs (HTML)
 - CareerEgypt (HTML)
-- Telegram (API)
-- Facebook (Graph API)
+- Telegram (API) - كل القنوات اللي انت محددها
+- Facebook (Graph API) - كل الجروبات اللي انت محددها
 """
 
 import os
@@ -272,7 +272,7 @@ class CareerEgyptProvider(JobProvider):
 
 
 # ============================================
-# 4. تليجرام (باستخدام @username أو chat_id)
+# 4. تليجرام (باستخدام جميع القنوات اللي انت محددها)
 # ============================================
 class TelegramProvider(JobProvider):
     source_name = "telegram"
@@ -309,6 +309,8 @@ class TelegramProvider(JobProvider):
                     continue
                 for msg in data.get("result", []):
                     text = msg.get("message", {}).get("text", "")
+                    if not text:
+                        continue
                     if search_term in text.lower() or "وظيفة" in text or "محاسب" in text:
                         job = self._parse_message(text, channel)
                         if job:
@@ -350,7 +352,7 @@ class TelegramProvider(JobProvider):
 
 
 # ============================================
-# 5. فيسبوك (باستخدام Graph API)
+# 5. فيسبوك (باستخدام جميع الجروبات اللي انت محددها)
 # ============================================
 class FacebookProvider(JobProvider):
     source_name = "facebook"
@@ -366,10 +368,7 @@ class FacebookProvider(JobProvider):
             print("⚠️ فيسبوك: مفيش توكن أو جروبات محددة")
             return jobs
 
-        # نأخذ أول 10 جروبات فقط لتجنب بطء الأداء
-        active_groups = self.groups[:10] if len(self.groups) > 10 else self.groups
-
-        for group in active_groups:
+        for group in self.groups:
             group = group.strip()
             if not group:
                 continue
