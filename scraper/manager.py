@@ -12,7 +12,7 @@ sys.path.insert(0, '/app/bot')
 sys.path.insert(0, '/app/scraper')
 sys.path.insert(0, '/app/scraper/providers')
 
-from providers.wuzzuf import WuzzufProvider
+from providers.wuzzuf import WuzzufScraper
 from providers.forasna import ForasnaProvider
 from providers.bayt import BaytProvider
 from providers.indeed import IndeedProvider
