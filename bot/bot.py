@@ -1,16 +1,18 @@
+# bot/bot.py
 """
 بوت تليجرام لتقديم الوظائف تلقائياً (شخصي)
-بيشغل السكرابر تلقائياً عند بدء التشغيل
 """
 
 import asyncio
 import logging
 import os
+import subprocess
+import sys
 import threading
 import time
 from typing import List, Dict, Optional
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, CallbackQuery
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -53,25 +55,15 @@ AUTO_APPLY_ENABLED = os.environ.get("AUTO_APPLY_ENABLED", "false").lower() == "t
 WHATSAPP_NUMBER = os.environ.get("WHATSAPP_NUMBER", "")
 NOTIFY_INTERVAL_SECONDS = int(os.environ.get("NOTIFY_INTERVAL_SECONDS", 6 * 60 * 60))
 
-# ==================== Keep-Alive ====================
+# ==================== Keep-Alive (يخلي البوت شغال 24/7) ====================
 def keep_alive():
+    """دالة للحفاظ على البوت شغال"""
     while True:
-        time.sleep(300)
+        time.sleep(300)  # كل 5 دقائق
         logger.info("🔄 البوت لسه شغال...")
-threading.Thread(target=keep_alive, daemon=True).start()
 
-# ==================== تشغيل السكرابر ====================
-def run_scraper():
-    """تشغيل سكرابر جمع الوظائف من Wuzzuf"""
-    try:
-        import sys
-        sys.path.insert(0, '/app')
-        from scraper.wuzzuf_scraper import main as scraper_main
-        logger.info("🔄 بدء جمع الوظائف...")
-        scraper_main()
-        logger.info("✅ تم جمع الوظائف بنجاح")
-    except Exception as e:
-        logger.error(f"❌ فشل السكرابر: {e}")
+# بدء الـ keep-alive في خيط منفصل
+threading.Thread(target=keep_alive, daemon=True).start()
 
 # ==================== أدوات مساعدة ====================
 
@@ -173,6 +165,28 @@ async def send_jobs_digest(
     else:
         await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=InlineKeyboardMarkup(keyboard_rows))
 
+# ==================== دالة تشغيل السكرابر ====================
+
+def run_scraper() -> dict:
+    """تشغيل سكريبت جمع الوظائف وإرجاع النتيجة"""
+    try:
+        result = subprocess.run(
+            [sys.executable, "scraper/wuzzuf_scraper.py"],
+            capture_output=True,
+            text=True,
+            timeout=120
+        )
+        return {
+            "success": result.returncode == 0,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "code": result.returncode
+        }
+    except subprocess.TimeoutExpired:
+        return {"success": False, "error": "انتهى الوقت - السكرابر بطيء"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
 # ==================== الأوامر ====================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -207,6 +221,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/profile — عرض ملفك الشخصي\n"
         "/auto_on — تشغيل التقديم التلقائي\n"
         "/auto_off — إيقاف التقديم التلقائي\n"
+        "/scrape — تشغيل جمع الوظائف يدوياً\n"
         "/help — عرض المساعدة"
     )
     await update.message.reply_text(reply, parse_mode=ParseMode.HTML)
@@ -231,11 +246,34 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/auto_on — تشغيل التقديم التلقائي\n"
         "/auto_off — إيقاف التقديم التلقائي\n\n"
         "<b>أوامر إضافية:</b>\n"
+        "/scrape — تشغيل جمع الوظائف يدوياً\n"
         "/stats — إحصائيات عامة\n"
         "/help — عرض هذه المساعدة\n\n"
         "💡 <b>نصيحة:</b> استخدم أزرار التفاصيل للوصول إلى خيارات التقديم والحفظ."
     )
     await update.message.reply_text(help_text, parse_mode=ParseMode.HTML)
+
+async def scrape_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """أمر /scrape - تشغيل السكرابر لجمع الوظائف"""
+    user_id = update.effective_user.id
+    if not is_allowed_user(user_id):
+        await update.message.reply_text("⛔ غير مسموح.")
+        return
+    
+    await update.message.reply_text("🔄 جاري جمع الوظائف... استنى شوية ⏳")
+    
+    result = run_scraper()
+    
+    if result["success"]:
+        await update.message.reply_text(
+            f"✅ تم جمع الوظائف بنجاح!\n\n"
+            f"📊 النتيجة:\n{result['stdout'][-500:]}"
+        )
+    else:
+        await update.message.reply_text(
+            f"❌ فشل جمع الوظائف:\n"
+            f"{result.get('error', result.get('stderr', 'خطأ غير معروف'))[-500:]}"
+        )
 
 async def jobs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -502,6 +540,17 @@ async def push_new_jobs(context: ContextTypes.DEFAULT_TYPE):
             for job in jobs_to_send:
                 mark_notified(job["id"])
 
+# ==================== تشغيل السكرابر عند بداية البوت ====================
+
+def run_scraper_on_startup():
+    """تشغيل السكرابر مرة واحدة عند بداية البوت"""
+    logger.info("🔄 تشغيل السكرابر عند بداية البوت...")
+    result = run_scraper()
+    if result["success"]:
+        logger.info(f"✅ السكرابر اشتغل بنجاح: {result['stdout'][:200]}")
+    else:
+        logger.error(f"❌ فشل السكرابر: {result.get('error', result.get('stderr', 'خطأ'))}")
+
 # ==================== معالج الأخطاء ====================
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
@@ -520,11 +569,11 @@ async def main():
     if not ALLOWED_USER_IDS:
         logger.warning("⚠️ ALLOWED_USER_IDS غير محدد - البوت مش هيشتغل")
         return
-
-    logger.info("🔄 تشغيل السكرابر لأول مرة...")
-    run_scraper()
-
     logger.info(f"🤖 بدء تشغيل البوت للمستخدم: {ALLOWED_USER_IDS[0]}")
+    
+    # تشغيل السكرابر عند بداية البوت (مرة واحدة)
+    run_scraper_on_startup()
+    
     app = Application.builder().token(BOT_TOKEN).build()
     await app.bot.delete_webhook()
     app.add_handler(CommandHandler("start", start))
@@ -540,6 +589,7 @@ async def main():
     app.add_handler(CommandHandler("profile", profile_command))
     app.add_handler(CommandHandler("auto_on", auto_on_command))
     app.add_handler(CommandHandler("auto_off", auto_off_command))
+    app.add_handler(CommandHandler("scrape", scrape_command))  # ← الأمر الجديد
     app.add_handler(MessageHandler(filters.Document.ALL, document_handler))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_error_handler(error_handler)
