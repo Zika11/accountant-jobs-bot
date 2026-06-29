@@ -10,18 +10,12 @@ from typing import Optional, Dict, List, Any
 
 from supabase import create_client, Client
 
-# ==================== إعدادات ====================
-
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
-# ==================== عميل Supabase (Singleton) ====================
-
 _CLIENT: Optional[Client] = None
 
-
 def get_client() -> Client:
-    """إرجاع عميل Supabase (نسخة واحدة فقط)"""
     global _CLIENT
     if not SUPABASE_URL or not SUPABASE_KEY:
         raise RuntimeError("لازم تحدد SUPABASE_URL و SUPABASE_KEY في environment variables")
@@ -30,13 +24,9 @@ def get_client() -> Client:
     return _CLIENT
 
 
-# ==================== دوال الوظائف (jobs) ====================
-
 def insert_jobs(jobs: List[Dict]) -> int:
-    """إدراج أو تحديث وظائف جديدة"""
     if not jobs:
         return 0
-
     for job in jobs:
         if 'source' not in job:
             job['source'] = 'unknown'
@@ -44,7 +34,6 @@ def insert_jobs(jobs: List[Dict]) -> int:
             job['status'] = 'pending'
         if 'notified' not in job:
             job['notified'] = False
-
     client = get_client()
     try:
         result = client.table("jobs").upsert(jobs, on_conflict="url").execute()
@@ -55,7 +44,6 @@ def insert_jobs(jobs: List[Dict]) -> int:
 
 
 def get_unnotified_jobs(limit: int = 20) -> List[Dict]:
-    """جلب الوظائف الجديدة (غير مُبلغ عنها)"""
     client = get_client()
     try:
         result = (
@@ -74,7 +62,6 @@ def get_unnotified_jobs(limit: int = 20) -> List[Dict]:
 
 
 def get_jobs_by_status(status: str, limit: int = 20) -> List[Dict]:
-    """جلب الوظائف حسب الحالة"""
     client = get_client()
     try:
         result = (
@@ -92,12 +79,10 @@ def get_jobs_by_status(status: str, limit: int = 20) -> List[Dict]:
 
 
 def get_pending_jobs(limit: int = 20) -> List[Dict]:
-    """جلب الوظائف قيد الانتظار"""
     return get_jobs_by_status("pending", limit)
 
 
 def mark_notified(job_id: str) -> bool:
-    """تحديد وظيفة كـ 'تم الإبلاغ عنها' """
     client = get_client()
     try:
         client.table("jobs").update({"notified": True}).eq("id", job_id).execute()
@@ -108,12 +93,10 @@ def mark_notified(job_id: str) -> bool:
 
 
 def update_status(job_id: str, status: str) -> bool:
-    """تحديث حالة وظيفة"""
     valid_statuses = ["pending", "saved", "ignored", "applied", "expired"]
     if status not in valid_statuses:
         print(f"⚠️ حالة غير صالحة: {status}")
         return False
-
     client = get_client()
     try:
         client.table("jobs").update({"status": status}).eq("id", job_id).execute()
@@ -124,7 +107,6 @@ def update_status(job_id: str, status: str) -> bool:
 
 
 def get_job_by_id(job_id: str) -> Optional[Dict]:
-    """جلب وظيفة بواسطة الـ ID"""
     client = get_client()
     try:
         result = client.table("jobs").select("*").eq("id", job_id).limit(1).execute()
@@ -135,16 +117,13 @@ def get_job_by_id(job_id: str) -> Optional[Dict]:
 
 
 def search_jobs(keyword: str, limit: int = 15) -> List[Dict]:
-    """بحث في الوظائف - يدعم كلمات متعددة"""
     client = get_client()
     keyword = keyword.strip()
     if not keyword:
         return []
 
-    # تقسيم الكلمات للبحث
+    # تقسيم الكلمات
     terms = keyword.split()
-    
-    # لو في كلمة واحدة، استخدم or_ العادية
     if len(terms) == 1:
         pattern = f"%{keyword}%"
         try:
@@ -162,7 +141,6 @@ def search_jobs(keyword: str, limit: int = 15) -> List[Dict]:
             print(f"⚠️ فشل search_jobs: {e}")
             return []
     else:
-        # لكلمات متعددة، نجمع النتائج من كل كلمة ونتجنب التكرار
         all_results = []
         seen_urls = set()
         for term in terms:
@@ -183,14 +161,11 @@ def search_jobs(keyword: str, limit: int = 15) -> List[Dict]:
                         all_results.append(job)
             except Exception as e:
                 print(f"⚠️ فشل search_jobs للكلمة {term}: {e}")
-        
-        # رتب حسب الأحدث
         all_results.sort(key=lambda x: x.get('created_at', ''), reverse=True)
         return all_results[:limit]
 
 
 def get_stats() -> Dict:
-    """جلب إحصائيات الوظائف (محسّن)"""
     client = get_client()
     try:
         statuses = ["pending", "saved", "ignored", "applied", "expired"]
@@ -204,22 +179,18 @@ def get_stats() -> Dict:
             "with_contact": 0,
             "by_source": {}
         }
-
         for status in statuses:
             result = client.table("jobs").select("*", count="exact").eq("status", status).execute()
             stats[status] = result.count or 0
             stats["total"] += result.count or 0
-
         result = client.table("jobs").select("*", count="exact").or_(
             "contact_email.not.is.null,contact_phone.not.is.null"
         ).execute()
         stats["with_contact"] = result.count or 0
-
         result = client.table("jobs").select("source").execute()
         for row in result.data or []:
             src = row.get('source', 'unknown')
             stats["by_source"][src] = stats["by_source"].get(src, 0) + 1
-
         return stats
     except Exception as e:
         print(f"⚠️ فشل get_stats: {e}")
@@ -231,7 +202,6 @@ def get_stats() -> Dict:
 
 
 def expire_old_jobs(days: int = 14) -> int:
-    """تحويل الوظائف القديمة إلى expired"""
     client = get_client()
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     try:
@@ -248,10 +218,7 @@ def expire_old_jobs(days: int = 14) -> int:
         return 0
 
 
-# ==================== دوال الإعدادات (settings) ====================
-
 def get_setting(key: str) -> Optional[str]:
-    """جلب إعداد"""
     client = get_client()
     try:
         result = client.table("settings").select("value").eq("key", key).limit(1).execute()
@@ -262,15 +229,12 @@ def get_setting(key: str) -> Optional[str]:
 
 
 def set_setting(key: str, value: str):
-    """تعيين إعداد"""
     client = get_client()
     try:
         client.table("settings").upsert({"key": key, "value": value}, on_conflict="key").execute()
     except Exception as e:
         print(f"⚠️ فشل set_setting: {e}")
 
-
-# ==================== دوال الملفات الشخصية (user_profiles) ====================
 
 def create_user_profile(
     user_id: str,
@@ -286,12 +250,10 @@ def create_user_profile(
     email: str = None,
     auto_apply: bool = True,
 ) -> Optional[Dict]:
-    """إنشاء ملف شخصي جديد"""
     if skills is None:
         skills = []
     if preferred_locations is None:
         preferred_locations = []
-
     client = get_client()
     data = {
         "user_id": user_id,
@@ -316,7 +278,6 @@ def create_user_profile(
 
 
 def get_user_profile(user_id: str) -> Optional[Dict]:
-    """جلب ملف شخصي"""
     client = get_client()
     try:
         result = client.table("user_profiles").select("*").eq("user_id", user_id).limit(1).execute()
@@ -327,10 +288,8 @@ def get_user_profile(user_id: str) -> Optional[Dict]:
 
 
 def update_user_profile(user_id: str, updates: Dict) -> Optional[Dict]:
-    """تحديث ملف شخصي"""
     if not updates:
         return get_user_profile(user_id)
-
     client = get_client()
     try:
         result = client.table("user_profiles").update(updates).eq("user_id", user_id).execute()
@@ -341,14 +300,12 @@ def update_user_profile(user_id: str, updates: Dict) -> Optional[Dict]:
 
 
 def upsert_user_profile(user_id: str, data: Dict) -> Optional[Dict]:
-    """إنشاء أو تحديث ملف شخصي"""
     allowed_fields = [
         "name", "experience_years", "skills", "preferred_locations",
         "expected_salary", "cv_text", "cv_file_id", "chat_id",
         "phone", "email", "auto_apply"
     ]
     filtered_data = {k: v for k, v in data.items() if k in allowed_fields}
-
     existing = get_user_profile(user_id)
     if existing:
         updates = {k: v for k, v in filtered_data.items() if v is not None}
@@ -358,7 +315,6 @@ def upsert_user_profile(user_id: str, data: Dict) -> Optional[Dict]:
 
 
 def delete_user_profile(user_id: str) -> bool:
-    """حذف ملف شخصي"""
     client = get_client()
     try:
         result = client.table("user_profiles").delete().eq("user_id", user_id).execute()
@@ -368,10 +324,7 @@ def delete_user_profile(user_id: str) -> bool:
         return False
 
 
-# ==================== دوال سجلات الأخطاء (scraper_logs) ====================
-
 def log_scraper_error(source: str, error: str, traceback_text: str = "") -> bool:
-    """تسجيل خطأ في السكرابر"""
     client = get_client()
     try:
         data = {
