@@ -1,6 +1,5 @@
-requests>=2.31.0
-beautifulsoup4>=4.12.0
+requests
+beautifulsoup4
 supabase==2.7.4
 python-telegram-bot[job-queue]==21.6
-python-dotenv>=1.0.0
-tenacity>=8.2.0
+python-dotenv
