@@ -33,7 +33,7 @@ def get_client() -> Client:
 # ==================== دوال الوظائف (jobs) ====================
 
 def insert_jobs(jobs: List[Dict]) -> int:
-    """إدراج وظائف جديدة (تجاهل المكرر حسب الرابط)"""
+    """إدراج أو تحديث وظائف جديدة (تجاهل المكرر حسب الرابط)"""
     if not jobs:
         return 0
 
@@ -47,7 +47,8 @@ def insert_jobs(jobs: List[Dict]) -> int:
 
     client = get_client()
     try:
-        result = client.table("jobs").upsert(jobs, on_conflict="url", ignore_duplicates=True).execute()
+        # ✅ أهم تغيير: شيل ignore_duplicates=True عشان يحدث البيانات
+        result = client.table("jobs").upsert(jobs, on_conflict="url").execute()
         return len(result.data) if result.data else 0
     except Exception as e:
         print(f"⚠️ فشل insert_jobs: {e}")
