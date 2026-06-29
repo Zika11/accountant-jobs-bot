@@ -11,7 +11,7 @@ sys.path.insert(0, '/app/bot')
 sys.path.insert(0, '/app/scraper')
 sys.path.insert(0, '/app/scraper/providers')
 
-# ✅ استورد WuzzufProvider (الاسم الصحيح)
+# ✅ التعديل المهم: استخدم WuzzufProvider مش WuzzufScraper
 from providers.wuzzuf import WuzzufProvider
 from providers.forasna import ForasnaProvider
 from providers.bayt import BaytProvider
@@ -34,7 +34,7 @@ from db import insert_jobs, expire_old_jobs, log_scraper_error
 
 
 def get_all_providers():
-    location_filter = []
+    location_filter = []  # نشيل فلترة الموقع
     max_exp = os.environ.get("MAX_EXPERIENCE_YEARS")
     max_exp = int(max_exp) if max_exp and max_exp.isdigit() else 3
 
@@ -128,11 +128,9 @@ def main():
     try:
         count = insert_jobs(jobs)
         print(f"✅ تم حفظ {count} وظيفة جديدة في Supabase")
-
         expired = expire_old_jobs(days=int(os.environ.get("EXPIRE_DAYS", 14)))
         if expired:
             print(f"🧹 تم إغلاق {expired} وظيفة قديمة")
-
     except Exception as e:
         print(f"⚠️ فشل الحفظ في Supabase: {e}")
         import csv
