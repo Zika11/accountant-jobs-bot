@@ -1,8 +1,4 @@
 # scraper/manager.py
-"""
-مدير جمع الوظائف من جميع المصادر
-"""
-
 import os
 import sys
 import time
@@ -10,7 +6,6 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
-# إضافة المسارات المطلوبة
 sys.path.insert(0, '/app')
 sys.path.insert(0, '/app/bot')
 sys.path.insert(0, '/app/scraper')
@@ -21,7 +16,6 @@ from providers.forasna import ForasnaProvider
 from providers.bayt import BaytProvider
 from providers.indeed import IndeedProvider
 
-# محاولة استيراد المصادر المصرية (لو مش موجودة، نتجاوزها)
 try:
     from providers.egypt_providers import (
         JobzellaProvider,
@@ -39,20 +33,17 @@ from db import insert_jobs, expire_old_jobs, log_scraper_error
 
 
 def get_all_providers():
-    """إرجاع قائمة بكل المصادر المتاحة"""
     location_filter = [loc.strip() for loc in os.environ.get("LOCATION_FILTER", "Cairo,Giza,Menoufia").split(',') if loc.strip()]
     max_exp = os.environ.get("MAX_EXPERIENCE_YEARS")
     max_exp = int(max_exp) if max_exp and max_exp.isdigit() else 3
 
-    providers = []
+    providers = [
+        WuzzufProvider(location_filter=location_filter, max_experience_years=max_exp),
+        ForasnaProvider(max_experience_years=max_exp),
+        BaytProvider(max_experience_years=max_exp),
+        IndeedProvider(max_experience_years=max_exp),
+    ]
 
-    # المصادر الأساسية (موجودة دائماً)
-    providers.append(WuzzufProvider(location_filter=location_filter, max_experience_years=max_exp))
-    providers.append(ForasnaProvider(max_experience_years=max_exp))
-    providers.append(BaytProvider(max_experience_years=max_exp))
-    providers.append(IndeedProvider(max_experience_years=max_exp))
-
-    # المصادر المصرية (لو متاحة)
     if EGYPT_PROVIDERS_AVAILABLE:
         providers.append(JobzellaProvider(max_experience_years=max_exp))
         providers.append(EgyptianJobsProvider(max_experience_years=max_exp))
@@ -64,7 +55,6 @@ def get_all_providers():
 
 
 def collect_all_jobs(search_term="محاسب حديث التخرج", max_pages=3):
-    """جمع الوظائف من جميع المصادر بالتوازي"""
     providers = get_all_providers()
     all_jobs = []
     failed_providers = []
@@ -93,7 +83,6 @@ def collect_all_jobs(search_term="محاسب حديث التخرج", max_pages=3
                     "timestamp": datetime.now().isoformat()
                 })
 
-    # إزالة التكرار حسب الرابط
     seen = set()
     unique = []
     for job in all_jobs:
@@ -101,7 +90,6 @@ def collect_all_jobs(search_term="محاسب حديث التخرج", max_pages=3
             seen.add(job['url'])
             unique.append(job)
 
-    # تسجيل الأخطاء في قاعدة البيانات
     if failed_providers:
         for fail in failed_providers:
             try:
@@ -117,7 +105,6 @@ def collect_all_jobs(search_term="محاسب حديث التخرج", max_pages=3
 
 
 def main():
-    """الدالة الرئيسية"""
     from dotenv import load_dotenv
     load_dotenv()
 
@@ -145,7 +132,6 @@ def main():
 
     except Exception as e:
         print(f"⚠️ فشل الحفظ في Supabase: {e}")
-        # حفظ في CSV كخطة بديلة
         import csv
         with open("all_jobs.csv", "w", newline="", encoding="utf-8-sig") as f:
             if jobs:
@@ -154,7 +140,6 @@ def main():
                 writer.writerows(jobs)
         print("💾 تم حفظ الوظائف في all_jobs.csv")
 
-    # إرسال إشعار
     bot_token = os.environ.get("BOT_TOKEN")
     chat_id = os.environ.get("ALLOWED_USER_IDS", "").split(",")[0] if os.environ.get("ALLOWED_USER_IDS") else None
 
