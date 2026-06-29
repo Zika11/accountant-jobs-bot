@@ -1,7 +1,6 @@
 """
-سكريبت جمع وظائف "محاسب" و "محاسب حديث التخرج" من Wuzzuf
+سكريبت جمع وظائف "محاسب حديث التخرج" من Wuzzuf
 - يجيب قائمة الوظائف من صفحات البحث
-- يفلتر حسب المكان (اختياري)
 - يفلتر حسب الخبرة (0-3 سنوات)
 - يدخل على كل وظيفة لو فيها إيميل أو رقم تليفون مكتوب في الوصف (بالتوازي)
 - يحفظهم في Supabase (ولو الاتصال غير متاح، يحفظهم في CSV كخطة بديلة)
@@ -22,8 +21,6 @@ load_dotenv()
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "bot"))
 
-# ==================== إعدادات البحث ====================
-# البحث عن محاسب + حديث التخرج معاً
 SEARCH_TERM = os.environ.get("SEARCH_TERM", "محاسب حديث التخرج")
 MAX_PAGES = int(os.environ.get("MAX_PAGES", 3))
 DELAY_BETWEEN_REQUESTS = float(os.environ.get("DELAY_BETWEEN_REQUESTS", 2.0))
@@ -31,12 +28,10 @@ MAX_RETRIES = int(os.environ.get("MAX_RETRIES", 3))
 RETRY_BASE_DELAY = float(os.environ.get("RETRY_BASE_DELAY", 3.0))
 OUTPUT_CSV = "wuzzuf_jobs.csv"
 
-# فلترة الموقع
-LOCATION_FILTER = [
-    loc.strip() for loc in os.environ.get("LOCATION_FILTER", "Cairo,Giza,Menoufia").split(",") if loc.strip()
-]
+# فلترة الموقع - شيلناها خالص
+LOCATION_FILTER = []
 
-# فلترة الخبرة (افتراضي 3 سنوات)
+# فلترة الخبرة - 0-3 سنوات
 _max_exp_raw = os.environ.get("MAX_EXPERIENCE_YEARS", "3").strip()
 MAX_EXPERIENCE_YEARS = int(_max_exp_raw) if _max_exp_raw.isdigit() else 3
 
@@ -195,7 +190,6 @@ def collect_jobs() -> list[dict]:
             if not experience_matches(job):
                 continue
             filtered_jobs.append(job)
-        # جلب التفاصيل بالتوازي
         if filtered_jobs:
             with ThreadPoolExecutor(max_workers=5) as executor:
                 futures = {executor.submit(extract_contact_info, job["url"]): job for job in filtered_jobs}
