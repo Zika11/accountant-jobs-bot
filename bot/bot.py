@@ -6,6 +6,8 @@
 import asyncio
 import logging
 import os
+import threading
+import time
 from typing import List, Dict, Optional
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, CallbackQuery
@@ -50,6 +52,17 @@ ALLOWED_USER_IDS = [x.strip() for x in os.environ.get("ALLOWED_USER_IDS", "").sp
 AUTO_APPLY_ENABLED = os.environ.get("AUTO_APPLY_ENABLED", "false").lower() == "true"
 WHATSAPP_NUMBER = os.environ.get("WHATSAPP_NUMBER", "")
 NOTIFY_INTERVAL_SECONDS = int(os.environ.get("NOTIFY_INTERVAL_SECONDS", 6 * 60 * 60))
+
+# ==================== Keep-Alive ====================
+def keep_alive():
+    """دالة تبقي البوت شغال طول الوقت"""
+    while True:
+        time.sleep(300)  # كل 5 دقايق
+        logger.info("🔄 البوت لسه شغال...")
+
+# تشغيل الـ keep-alive في خيط منفصل
+_thread = threading.Thread(target=keep_alive, daemon=True)
+_thread.start()
 
 # ==================== أدوات مساعدة ====================
 
