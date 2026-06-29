@@ -6,12 +6,12 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
-# تأكد من مسارات الاستيراد
 sys.path.insert(0, '/app')
 sys.path.insert(0, '/app/bot')
 sys.path.insert(0, '/app/scraper')
 sys.path.insert(0, '/app/scraper/providers')
 
+# ✅ استخدم WuzzufScraper بدل WuzzufProvider
 from providers.wuzzuf import WuzzufScraper
 from providers.forasna import ForasnaProvider
 from providers.bayt import BaytProvider
@@ -34,12 +34,12 @@ from db import insert_jobs, expire_old_jobs, log_scraper_error
 
 
 def get_all_providers():
-    location_filter = []  # نشيل فلترة الموقع
+    location_filter = []
     max_exp = os.environ.get("MAX_EXPERIENCE_YEARS")
     max_exp = int(max_exp) if max_exp and max_exp.isdigit() else 3
 
     providers = [
-        WuzzufProvider(location_filter=location_filter, max_experience_years=max_exp),
+        WuzzufScraper(location_filter=location_filter, max_experience_years=max_exp),
         ForasnaProvider(max_experience_years=max_exp),
         BaytProvider(max_experience_years=max_exp),
         IndeedProvider(max_experience_years=max_exp),
@@ -84,7 +84,6 @@ def collect_all_jobs(search_term="محاسب حديث التخرج", max_pages=3
                     "timestamp": datetime.now().isoformat()
                 })
 
-    # إزالة المكرر حسب الرابط
     seen = set()
     unique = []
     for job in all_jobs:
@@ -92,7 +91,6 @@ def collect_all_jobs(search_term="محاسب حديث التخرج", max_pages=3
             seen.add(job['url'])
             unique.append(job)
 
-    # ترتيب حسب الأحدث (الأيام الأقل أولاً)
     unique.sort(key=lambda x: x.get('days_old', 99))
 
     if failed_providers:
