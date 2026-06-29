@@ -40,9 +40,9 @@ from db import insert_jobs, expire_old_jobs, log_scraper_error
 
 def get_all_providers():
     """إرجاع قائمة بكل المصادر المتاحة"""
-    location_filter = [loc.strip() for loc in os.environ.get("LOCATION_FILTER", "Cairo,Giza").split(',') if loc.strip()]
+    location_filter = [loc.strip() for loc in os.environ.get("LOCATION_FILTER", "Cairo,Giza,Menoufia").split(',') if loc.strip()]
     max_exp = os.environ.get("MAX_EXPERIENCE_YEARS")
-    max_exp = int(max_exp) if max_exp and max_exp.isdigit() else None
+    max_exp = int(max_exp) if max_exp and max_exp.isdigit() else 3
 
     providers = []
 
@@ -63,7 +63,7 @@ def get_all_providers():
     return providers
 
 
-def collect_all_jobs(search_term="محاسب", max_pages=3):
+def collect_all_jobs(search_term="محاسب حديث التخرج", max_pages=3):
     """جمع الوظائف من جميع المصادر بالتوازي"""
     providers = get_all_providers()
     all_jobs = []
@@ -121,7 +121,7 @@ def main():
     from dotenv import load_dotenv
     load_dotenv()
 
-    search_term = os.environ.get("SEARCH_TERM", "محاسب")
+    search_term = os.environ.get("SEARCH_TERM", "محاسب حديث التخرج")
     max_pages = int(os.environ.get("MAX_PAGES", 3))
 
     start_time = time.time()
