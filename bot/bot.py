@@ -41,7 +41,6 @@ from db import (
 from message_templates import build_cover_letter, build_whatsapp_link, build_mailto_link
 from auto_apply import auto_apply_whatsapp
 
-# ==================== إعدادات ====================
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -54,14 +53,11 @@ AUTO_APPLY_ENABLED = os.environ.get("AUTO_APPLY_ENABLED", "false").lower() == "t
 WHATSAPP_NUMBER = os.environ.get("WHATSAPP_NUMBER", "")
 NOTIFY_INTERVAL_SECONDS = int(os.environ.get("NOTIFY_INTERVAL_SECONDS", 6 * 60 * 60))
 
-# ==================== أدوات مساعدة ====================
 
 def is_allowed_user(user_id: int) -> bool:
-    """التحقق من صلاحية المستخدم"""
     return str(user_id) in ALLOWED_USER_IDS
 
 def format_job_text(job: dict, show_apply_status: bool = True) -> str:
-    """تنسيق نص الوظيفة للعرض"""
     lines = [f"📌 {job['title']}"]
     if job.get("company"):
         lines.append(f"🏢 {job['company']}")
@@ -96,7 +92,6 @@ def format_job_text(job: dict, show_apply_status: bool = True) -> str:
     return "\n".join(lines)
 
 def build_job_keyboard(job: dict, show_actions: bool = True, auto_apply_enabled: bool = None) -> InlineKeyboardMarkup:
-    """بناء أزرار الوظيفة"""
     if auto_apply_enabled is None:
         auto_apply_enabled = AUTO_APPLY_ENABLED
     buttons = []
@@ -131,7 +126,6 @@ async def send_jobs_digest(
     header: str,
     show_apply_status: bool = False
 ):
-    """إرسال قائمة وظائف مجمعة مع تقسيم الرسالة الطويلة"""
     if not jobs:
         return
     lines = [header, ""]
@@ -158,10 +152,7 @@ async def send_jobs_digest(
     else:
         await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=InlineKeyboardMarkup(keyboard_rows))
 
-# ==================== الأوامر ====================
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """أمر /start - تسجيل المستخدم وعرض الترحيب"""
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
     name = update.effective_user.first_name or "صديقي"
@@ -199,7 +190,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(reply, parse_mode=ParseMode.HTML)
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """أمر /help - عرض المساعدة"""
     user_id = update.effective_user.id
     if not is_allowed_user(user_id):
         await update.message.reply_text("⛔ غير مسموح.")
@@ -227,7 +217,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(help_text, parse_mode=ParseMode.HTML)
 
 async def jobs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """أمر /jobs - عرض الوظائف الجديدة"""
     user_id = update.effective_user.id
     if not is_allowed_user(user_id):
         await update.message.reply_text("⛔ غير مسموح.")
@@ -239,7 +228,6 @@ async def jobs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_jobs_digest(context, update.effective_chat.id, jobs, f"📋 آخر الوظائف ({len(jobs)}):")
 
 async def pending_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """أمر /pending - عرض الوظائف قيد الانتظار"""
     user_id = update.effective_user.id
     if not is_allowed_user(user_id):
         await update.message.reply_text("⛔ غير مسموح.")
@@ -255,7 +243,6 @@ async def pending_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def applied_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """أمر /applied - عرض الوظائف المتقدّم عليها"""
     user_id = update.effective_user.id
     if not is_allowed_user(user_id):
         await update.message.reply_text("⛔ غير مسموح.")
@@ -271,7 +258,6 @@ async def applied_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def saved_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """أمر /saved - عرض الوظائف المحفوظة"""
     user_id = update.effective_user.id
     if not is_allowed_user(user_id):
         await update.message.reply_text("⛔ غير مسموح.")
@@ -287,7 +273,6 @@ async def saved_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def ignored_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """أمر /ignored - عرض الوظائف المتجاهلة"""
     user_id = update.effective_user.id
     if not is_allowed_user(user_id):
         await update.message.reply_text("⛔ غير مسموح.")
@@ -303,7 +288,6 @@ async def ignored_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """أمر /search - بحث في الوظائف"""
     user_id = update.effective_user.id
     if not is_allowed_user(user_id):
         await update.message.reply_text("⛔ غير مسموح.")
@@ -319,7 +303,6 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_jobs_digest(context, update.effective_chat.id, jobs, f'🔍 نتايج البحث عن "{keyword}":')
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """أمر /stats - عرض الإحصائيات"""
     user_id = update.effective_user.id
     if not is_allowed_user(user_id):
         await update.message.reply_text("⛔ غير مسموح.")
@@ -342,7 +325,6 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 async def setcv_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """أمر /setcv - رفع ملف CV"""
     user_id = update.effective_user.id
     if not is_allowed_user(user_id):
         await update.message.reply_text("⛔ غير مسموح.")
@@ -351,7 +333,6 @@ async def setcv_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📎 ابعتلي ملف الـ CV بصيغة PDF")
 
 async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالج رفع الملفات - حفظ الـ CV"""
     user_id = update.effective_user.id
     if not is_allowed_user(user_id):
         await update.message.reply_text("⛔ غير مسموح.")
@@ -369,7 +350,6 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ تم حفظ الـ CV بنجاح!")
 
 async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """أمر /profile - عرض الملف الشخصي"""
     user_id = str(update.effective_user.id)
     if not is_allowed_user(int(user_id)):
         await update.message.reply_text("⛔ غير مسموح.")
@@ -394,7 +374,6 @@ async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 async def auto_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """أمر /auto_on - تشغيل التقديم التلقائي"""
     user_id = update.effective_user.id
     if not is_allowed_user(user_id):
         await update.message.reply_text("⛔ غير مسموح.")
@@ -403,7 +382,6 @@ async def auto_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ تم تشغيل التقديم التلقائي")
 
 async def auto_off_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """أمر /auto_off - إيقاف التقديم التلقائي"""
     user_id = update.effective_user.id
     if not is_allowed_user(user_id):
         await update.message.reply_text("⛔ غير مسموح.")
@@ -412,34 +390,30 @@ async def auto_off_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ تم إيقاف التقديم التلقائي")
 
 async def scrape_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """أمر /scrape - تشغيل السكرابر يدوي"""
+    """أمر /scrape - تشغيل السكرابر يدوي عبر manager.py"""
     user_id = update.effective_user.id
     if not is_allowed_user(user_id):
         await update.message.reply_text("⛔ غير مسموح.")
         return
     await update.message.reply_text("🔄 جاري جمع الوظائف... استنى شوية ⏳")
     try:
-        # ✅ تشغيل manager.py عشان يجيب من كل المصادر
         result = subprocess.run(
             [sys.executable, "scraper/manager.py"],
             capture_output=True,
             text=True,
-            timeout=180
+            timeout=120
         )
-        output = result.stdout[-800:] if result.stdout else result.stderr[-800:]
+        output = result.stdout[-500:] if result.stdout else result.stderr[-500:]
         if result.returncode == 0:
-            await update.message.reply_text(f"✅ تم جمع الوظائف بنجاح!\n\n{output}")
+            await update.message.reply_text(f"✅ تم جمع الوظائف بنجاح!\n{output}")
         else:
-            await update.message.reply_text(f"❌ فشل الجمع:\n\n{output}")
+            await update.message.reply_text(f"❌ فشل الجمع:\n{output}")
     except subprocess.TimeoutExpired:
         await update.message.reply_text("⏰ استغرق السكرابر وقتاً طويلاً. حاول مرة أخرى.")
     except Exception as e:
         await update.message.reply_text(f"❌ خطأ: {e}")
 
-# ==================== معالج الأزرار ====================
-
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالج ضغط الأزرار"""
     query = update.callback_query
     await query.answer()
     user_id = update.effective_user.id
@@ -515,10 +489,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await query.answer("❌ إجراء غير معروف")
 
-# ==================== المهمة الدورية ====================
-
 async def push_new_jobs(context: ContextTypes.DEFAULT_TYPE):
-    """إشعار دوري بالوظائف الجديدة مع التقديم التلقائي"""
     if not ALLOWED_USER_IDS:
         return
     jobs = get_unnotified_jobs(limit=20)
@@ -557,10 +528,7 @@ async def push_new_jobs(context: ContextTypes.DEFAULT_TYPE):
             for job in jobs_to_send:
                 mark_notified(job["id"])
 
-# ==================== معالج الأخطاء ====================
-
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    """معالج الأخطاء العام"""
     logger.error(f"⚠️ خطأ: {context.error}")
     if update and hasattr(update, 'effective_chat'):
         try:
@@ -571,10 +539,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
 
-# ==================== التشغيل ====================
-
 async def main():
-    """الدالة الرئيسية لتشغيل البوت"""
     if not BOT_TOKEN:
         raise RuntimeError("❌ BOT_TOKEN مطلوب")
     if not ALLOWED_USER_IDS:
