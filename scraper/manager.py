@@ -11,8 +11,8 @@ sys.path.insert(0, '/app/bot')
 sys.path.insert(0, '/app/scraper')
 sys.path.insert(0, '/app/scraper/providers')
 
-# ✅ استخدم WuzzufScraper بدل WuzzufProvider
-from providers.wuzzuf import WuzzufScraper
+# ✅ استورد WuzzufProvider (الاسم الصحيح)
+from providers.wuzzuf import WuzzufProvider
 from providers.forasna import ForasnaProvider
 from providers.bayt import BaytProvider
 from providers.indeed import IndeedProvider
@@ -39,7 +39,7 @@ def get_all_providers():
     max_exp = int(max_exp) if max_exp and max_exp.isdigit() else 3
 
     providers = [
-        WuzzufScraper(location_filter=location_filter, max_experience_years=max_exp),
+        WuzzufProvider(location_filter=location_filter, max_experience_years=max_exp),
         ForasnaProvider(max_experience_years=max_exp),
         BaytProvider(max_experience_years=max_exp),
         IndeedProvider(max_experience_years=max_exp),
