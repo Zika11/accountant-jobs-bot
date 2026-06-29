@@ -41,7 +41,6 @@ def insert_jobs(jobs: List[Dict]) -> int:
     if not jobs:
         return 0
 
-    # التأكد من وجود الحقول المطلوبة
     for job in jobs:
         if 'source' not in job:
             job['source'] = 'unknown'
@@ -52,7 +51,6 @@ def insert_jobs(jobs: List[Dict]) -> int:
 
     client = get_client()
     try:
-        # ✅ أهم تغيير: شيل ignore_duplicates=True عشان يحدث البيانات
         result = client.table("jobs").upsert(jobs, on_conflict="url").execute()
         return len(result.data) if result.data else 0
     except Exception as e:
