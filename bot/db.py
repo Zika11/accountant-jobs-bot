@@ -37,7 +37,6 @@ def insert_jobs(jobs: List[Dict]) -> int:
     if not jobs:
         return 0
 
-    # التأكد من وجود source
     for job in jobs:
         if 'source' not in job:
             job['source'] = 'unknown'
@@ -58,30 +57,38 @@ def insert_jobs(jobs: List[Dict]) -> int:
 def get_unnotified_jobs(limit: int = 20) -> List[Dict]:
     """جلب الوظائف الجديدة (غير مُبلغ عنها)"""
     client = get_client()
-    result = (
-        client.table("jobs")
-        .select("*")
-        .eq("notified", False)
-        .eq("status", "pending")
-        .order("created_at", desc=True)
-        .limit(limit)
-        .execute()
-    )
-    return result.data or []
+    try:
+        result = (
+            client.table("jobs")
+            .select("*")
+            .eq("notified", False)
+            .eq("status", "pending")
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return result.data or []
+    except Exception as e:
+        print(f"⚠️ فشل get_unnotified_jobs: {e}")
+        return []
 
 
 def get_jobs_by_status(status: str, limit: int = 20) -> List[Dict]:
     """جلب الوظائف حسب الحالة"""
     client = get_client()
-    result = (
-        client.table("jobs")
-        .select("*")
-        .eq("status", status)
-        .order("created_at", desc=True)
-        .limit(limit)
-        .execute()
-    )
-    return result.data or []
+    try:
+        result = (
+            client.table("jobs")
+            .select("*")
+            .eq("status", status)
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return result.data or []
+    except Exception as e:
+        print(f"⚠️ فشل get_jobs_by_status: {e}")
+        return []
 
 
 def get_pending_jobs(limit: int = 20) -> List[Dict]:
@@ -90,7 +97,7 @@ def get_pending_jobs(limit: int = 20) -> List[Dict]:
 
 
 def mark_notified(job_id: str) -> bool:
-    """تحديد وظيفة كـ "تم الإبلاغ عنها" """
+    """تحديد وظيفة كـ 'تم الإبلاغ عنها' """
     client = get_client()
     try:
         client.table("jobs").update({"notified": True}).eq("id", job_id).execute()
@@ -128,7 +135,7 @@ def get_job_by_id(job_id: str) -> Optional[Dict]:
 
 
 def search_jobs(keyword: str, limit: int = 15) -> List[Dict]:
-    """بحث في الوظائف (العنوان، الشركة، المكان، المصدر)"""
+    """بحث في الوظائف (العنوان، الشركة، المكان، المصدر) - فقط pending و saved"""
     client = get_client()
     keyword = keyword.replace(",", " ").replace("%", " ").strip()
     pattern = f"%{keyword}%"
@@ -153,7 +160,6 @@ def get_stats() -> Dict:
     """جلب إحصائيات الوظائف (محسّن)"""
     client = get_client()
     try:
-        # استخدام count بدلاً من جلب كل البيانات
         statuses = ["pending", "saved", "ignored", "applied", "expired"]
         stats = {
             "total": 0,
@@ -166,17 +172,16 @@ def get_stats() -> Dict:
             "by_source": {}
         }
 
-        # جلب الإحصائيات حسب الحالة
         for status in statuses:
             result = client.table("jobs").select("*", count="exact").eq("status", status).execute()
             stats[status] = result.count or 0
             stats["total"] += result.count or 0
 
-        # جلب عدد الوظائف التي فيها وسيلة تواصل
-        result = client.table("jobs").select("*", count="exact").or_("contact_email.not.is.null,contact_phone.not.is.null").execute()
+        result = client.table("jobs").select("*", count="exact").or_(
+            "contact_email.not.is.null,contact_phone.not.is.null"
+        ).execute()
         stats["with_contact"] = result.count or 0
 
-        # جلب التوزيع حسب المصدر
         result = client.table("jobs").select("source").execute()
         for row in result.data or []:
             src = row.get('source', 'unknown')
@@ -304,13 +309,19 @@ def update_user_profile(user_id: str, updates: Dict) -> Optional[Dict]:
 
 def upsert_user_profile(user_id: str, data: Dict) -> Optional[Dict]:
     """إنشاء أو تحديث ملف شخصي"""
+    allowed_fields = [
+        "name", "experience_years", "skills", "preferred_locations",
+        "expected_salary", "cv_text", "cv_file_id", "chat_id",
+        "phone", "email", "auto_apply"
+    ]
+    filtered_data = {k: v for k, v in data.items() if k in allowed_fields}
+
     existing = get_user_profile(user_id)
     if existing:
-        # تحديث الحقول الموجودة فقط
-        updates = {k: v for k, v in data.items() if v is not None}
+        updates = {k: v for k, v in filtered_data.items() if v is not None}
         return update_user_profile(user_id, updates) or existing
     else:
-        return create_user_profile(user_id=user_id, **data)
+        return create_user_profile(user_id=user_id, **filtered_data)
 
 
 def delete_user_profile(user_id: str) -> bool:
@@ -334,7 +345,7 @@ def log_scraper_error(source: str, error: str, traceback_text: str = "") -> bool
             "source": source,
             "error": str(error)[:500],
             "traceback": traceback_text[:1000],
-            "timestamp": datetime.now(timezone.utc).isoformat()
+            "created_at": datetime.now(timezone.utc).isoformat()
         }
         client.table("scraper_logs").insert(data).execute()
         return True
