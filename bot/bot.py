@@ -389,29 +389,44 @@ async def auto_off_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     upsert_user_profile(str(user_id), {"auto_apply": False})
     await update.message.reply_text("❌ تم إيقاف التقديم التلقائي")
 
+# ================ تعديل أمر /scrape (يعمل في الخلفية) ================
+
+async def run_scraper_background(bot, chat_id: int):
+    """تشغيل السكرابر في الخلفية وإرسال النتيجة"""
+    try:
+        # استخدام asyncio.to_thread لتشغيل subprocess بدون حظر
+        result = await asyncio.to_thread(
+            subprocess.run,
+            [sys.executable, "scraper/manager.py"],
+            capture_output=True,
+            text=True,
+            timeout=300
+        )
+        if result.returncode == 0:
+            output = result.stdout[-1000:] if result.stdout else "تم الجمع بنجاح"
+            await bot.send_message(chat_id=chat_id, text=f"✅ تم جمع الوظائف بنجاح!\n{output}")
+        else:
+            error = result.stderr[-500:] if result.stderr else "خطأ غير معروف"
+            await bot.send_message(chat_id=chat_id, text=f"❌ فشل الجمع:\n{error}")
+    except subprocess.TimeoutExpired:
+        await bot.send_message(chat_id=chat_id, text="⏰ استغرق السكرابر وقتاً طويلاً (أكثر من 5 دقائق). حاول مرة أخرى.")
+    except Exception as e:
+        await bot.send_message(chat_id=chat_id, text=f"❌ خطأ: {e}")
+
 async def scrape_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """أمر /scrape - تشغيل السكرابر يدوي عبر manager.py"""
+    """أمر /scrape - تشغيل السكرابر في الخلفية"""
     user_id = update.effective_user.id
     if not is_allowed_user(user_id):
         await update.message.reply_text("⛔ غير مسموح.")
         return
-    await update.message.reply_text("🔄 جاري جمع الوظائف... استنى شوية ⏳")
-    try:
-        result = subprocess.run(
-            [sys.executable, "scraper/manager.py"],
-            capture_output=True,
-            text=True,
-            timeout=120
-        )
-        output = result.stdout[-500:] if result.stdout else result.stderr[-500:]
-        if result.returncode == 0:
-            await update.message.reply_text(f"✅ تم جمع الوظائف بنجاح!\n{output}")
-        else:
-            await update.message.reply_text(f"❌ فشل الجمع:\n{output}")
-    except subprocess.TimeoutExpired:
-        await update.message.reply_text("⏰ استغرق السكرابر وقتاً طويلاً. حاول مرة أخرى.")
-    except Exception as e:
-        await update.message.reply_text(f"❌ خطأ: {e}")
+
+    chat_id = update.effective_chat.id
+    await update.message.reply_text("🔄 جاري جمع الوظائف في الخلفية... هبلغك لما يخلص ⏳")
+
+    # تشغيل المهمة في الخلفية
+    asyncio.create_task(run_scraper_background(context.bot, chat_id))
+
+# ================ باقي الدوال ================
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
