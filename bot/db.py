@@ -33,10 +33,15 @@ def get_client() -> Client:
 # ==================== دوال الوظائف (jobs) ====================
 
 def insert_jobs(jobs: List[Dict]) -> int:
-    """إدراج أو تحديث وظائف جديدة (تجاهل المكرر حسب الرابط)"""
+    """
+    إدراج أو تحديث وظائف جديدة
+    - لو الوظيفة موجودة (نفس الرابط)، يتم تحديث كل الحقول
+    - إزالة ignore_duplicates=True عشان يحدث البيانات القديمة
+    """
     if not jobs:
         return 0
 
+    # التأكد من وجود الحقول المطلوبة
     for job in jobs:
         if 'source' not in job:
             job['source'] = 'unknown'
